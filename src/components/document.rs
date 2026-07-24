@@ -49,6 +49,9 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
         .as_ref()
         .map(|s| s.cmd_buf.clone())
         .unwrap_or_default();
+    let cursor_row_col = state_guard
+        .as_ref()
+        .and_then(|s| Some((s.row, s.col)));
     drop(state_guard);
 
     // To trigger re-renders on edit
@@ -337,6 +340,19 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
                         })
                     }.into_iter())
                 }
+                #(if let Some((row, col)) = cursor_row_col {
+                    if !matches!(current_mode, Mode::Command | Mode::Search { .. }) {
+                        Some(element! {
+                            View(padding_right: 1) {
+                                Text(content: format!("Ln {}, Col {}", row + 1, col), color: theme::COMMENT)
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }.into_iter())
             }
         }
     }

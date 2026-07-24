@@ -110,6 +110,12 @@ struct ScrollIntoViewContainerProps {
     pub scroll_handle: Option<Ref<ScrollViewHandle>>,
     pub cursor_moved: bool,
     pub child: Option<Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static>>,
+    /// Row of the cursor within this block (0-indexed). Used for precise
+    /// scroll-into-view when the block is taller than the viewport.
+    pub cursor_row: Option<i32>,
+    /// Extra rows below the block content to keep visible (e.g. the status
+    /// box showing "Ln X, Col Y: ...").
+    pub bottom_offset: Option<i32>,
 }
 
 #[component]
@@ -150,6 +156,8 @@ fn ScrollIntoViewContainer(
             let mut pending = pending.clone();
             let scroll_handle = props.scroll_handle.clone();
             let baseline = baseline.clone();
+            let cursor_row = props.cursor_row;
+            let bottom_offset = props.bottom_offset.unwrap_or(0);
             move || {
                 // Only consume the pending request once we actually have a
                 // baseline (i.e. `use_component_rect` has reported at least one
@@ -168,15 +176,50 @@ fn ScrollIntoViewContainer(
                         if viewport_h > 0 {
                             let scroll_off = scroll_ref.read().scroll_offset();
                             let top_margin = 1;
+                            let effective_bottom = block_bottom_content + bottom_offset;
                             let max_offset = (content_h - viewport_h).max(0);
 
                             let mut target = scroll_off;
-                            if block_top_content < target + top_margin {
-                                target = (block_top_content - top_margin).max(0);
-                            } else if block_bottom_content > target + viewport_h {
-                                let bottom_target = (block_bottom_content - viewport_h).max(0);
-                                if bottom_target < max_offset || target >= max_offset {
-                                    target = bottom_target.min(max_offset);
+
+                            if let Some(row) = cursor_row {
+                                // When the block is taller than the viewport,
+                                // use the cursor's row to compute a precise
+                                // scroll target so j/k keep the cursor visible
+                                // instead of only scrolling at block edges.
+                                let block_h = block_bottom_content - block_top_content;
+                                if block_h > viewport_h {
+                                    let cursor_content_pos = block_top_content + row;
+                                    // Keep cursor at the top margin when moving
+                                    // down past the viewport, or bring it back
+                                    // into view when moving up.
+                                    if cursor_content_pos < target + top_margin {
+                                        target = (cursor_content_pos - top_margin).max(0);
+                                    } else if cursor_content_pos >= target + viewport_h - 1 {
+                                        target = (cursor_content_pos - viewport_h + 2).max(0);
+                                    }
+                                } else {
+                                    // Block fits in viewport — use the original
+                                    // edge-based logic.
+                                    if block_top_content < target + top_margin {
+                                        target = (block_top_content - top_margin).max(0);
+                                    } else if effective_bottom > target + viewport_h {
+                                        let bottom_target =
+                                            (effective_bottom - viewport_h).max(0);
+                                        if bottom_target < max_offset || target >= max_offset {
+                                            target = bottom_target.min(max_offset);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // No cursor row info — fall back to block-edge logic.
+                                if block_top_content < target + top_margin {
+                                    target = (block_top_content - top_margin).max(0);
+                                } else if effective_bottom > target + viewport_h {
+                                    let bottom_target =
+                                        (effective_bottom - viewport_h).max(0);
+                                    if bottom_target < max_offset || target >= max_offset {
+                                        target = bottom_target.min(max_offset);
+                                    }
                                 }
                             }
                             scroll_ref.write().scroll_to(target);
@@ -609,6 +652,8 @@ pub fn BlocksRenderer(
                                                             scroll_handle: props.scroll_handle.clone(),
                                                             cursor_moved,
                                                             child: Some(factory),
+                                                            cursor_row: cursor_line_idx.map(|r| r as i32),
+                                                            bottom_offset: Some(0),
                                                         )
                                                     }.into_any()
                                                 } else {
@@ -793,6 +838,8 @@ pub fn BlocksRenderer(
                                 scroll_handle: props.scroll_handle.clone(),
                                 cursor_moved,
                                 child: Some(factory),
+                                cursor_row: cursor_line_idx.map(|r| r as i32),
+                                bottom_offset: Some(2),
                             )
                         }.into_any()
                     } else {

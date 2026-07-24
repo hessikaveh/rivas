@@ -156,6 +156,143 @@ $$
 \Delta(Rivas) = \delta(rivas) \times \frac{Rivas * 2}{2}
 ```
 
+## Large Block (scroll test)
+
+```json
+{
+  "name": "rivas-test-large-block",
+  "version": "1.0.0",
+  "description": "A very large JSON block to test scrolling within blocks that exceed the viewport height",
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.0",
+    "jest": "^29.7.0",
+    "@testing-library/react": "^14.1.0",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.0",
+    "lodash": "^4.17.0",
+    "axios": "^1.6.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint-plugin-react": "^7.33.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.2.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext .ts,.tsx",
+    "format": "prettier --write 'src/**/*.{ts,tsx,css}'",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist node_modules",
+    "prepare": "husky install"
+  },
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./styles": "./dist/styles.css"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "markdown",
+    "terminal",
+    "renderer",
+    "tui",
+    "rust"
+  ],
+  "author": "Rivas Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/rivas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/example/rivas/issues"
+  },
+  "homepage": "https://github.com/example/rivas#readme",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "config": {
+    "port": 3000,
+    "host": "localhost",
+    "logLevel": "info",
+    "features": {
+      "darkMode": true,
+      "syntaxHighlighting": true,
+      "mathRendering": true,
+      "imageSupport": true,
+      "mermaidDiagrams": true,
+      "tableAlignment": true,
+      "virtualScrolling": true,
+      "vimKeybindings": true,
+      "clipboardSupport": true,
+      "fileWatcher": true,
+      "hotReload": true,
+      "debugMode": false,
+      "analytics": false
+    },
+    "theme": {
+      "name": "tokyo-night",
+      "colors": {
+        "background": "#1a1b26",
+        "foreground": "#c0caf5",
+        "accent": "#7aa2f7",
+        "error": "#f7768e",
+        "warning": "#e0af68",
+        "success": "#9ece6a",
+        "info": "#7dcfff",
+        "muted": "#565f89"
+      },
+      "fonts": {
+        "mono": "JetBrains Mono",
+        "fallback": "DejaVu Sans Mono"
+      }
+    }
+  },
+  "metadata": {
+    "buildDate": "2024-01-15T10:30:00Z",
+    "commitHash": "abc123def456",
+    "branch": "main",
+    "ci": {
+      "provider": "github-actions",
+      "coverageThreshold": 80,
+      "lintStrict": true,
+      "requireTests": true,
+      "buildMatrix": ["linux-x64", "macos-arm64", "windows-x64"]
+    }
+  }
+}
+```
+
+This is a regular paragraph after the large block. It should be visible when you scroll past the JSON block.
+
 ## Mixed Content
 
 1. Render text first.
