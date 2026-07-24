@@ -1,4 +1,5 @@
 use crate::components::code_block::CodeBlock;
+use crate::components::cursor_info::CursorInfo;
 use crate::components::editor::{EditorState, Mode};
 use crate::components::heading::Heading;
 use crate::components::html_block::HtmlBlock;
@@ -17,39 +18,6 @@ use crate::theme;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-// "… rest of the truncated text"
-fn tail_to_width(s: &str, max: usize) -> String {
-    let mut out = String::new();
-    let mut width = 0usize;
-    for ch in s.chars().rev() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + w > max {
-            out.insert(0, '…');
-            break;
-        }
-        out.insert(0, ch);
-        width += w;
-    }
-    out
-}
-
-// "first part of the truncated text …"
-fn head_to_width(s: &str, max: usize) -> String {
-    let mut out = String::new();
-    let mut width = 0usize;
-    for ch in s.chars() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + w > max {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-        width += w;
-    }
-    out
-}
 
 // Estimate the height of a block in terminal rows
 pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u32 {
@@ -775,21 +743,9 @@ pub fn BlocksRenderer(
                         let after_str = after.to_string();
                         let cursor_row_col_clone = cursor_row_col.clone();
 
-
-                        let prefix = format!(
-                            "↳ Ln {}, Col {}: ",
-                            cursor_row_col_clone.map(|(r, _)| r + 1).unwrap_or(1),
-                            cursor_row_col_clone.map(|(_, c)| c).unwrap_or(0),
-                        );
+                        let info_row = cursor_row_col_clone.map(|(r, _)| r).unwrap_or(0);
+                        let info_col = cursor_row_col_clone.map(|(_, c)| c).unwrap_or(0);
                         let total = vw_clone.unwrap_or(80).saturating_sub(theme::TOTAL_VIEWPORT_OFFSET + 12) as usize;
-                        let budget  = total
-                            .saturating_sub(UnicodeWidthStr::width(prefix.as_str()))
-                            .saturating_sub(1)
-                            .max(8);
-                        let before_keep = budget / 2;
-                        let after_keep = budget - before_keep;
-                        let before_win = tail_to_width(&before_str, before_keep);
-                        let after_win = head_to_width(&after_str, after_keep);
 
                         let so = scroll_offset as i32;
                         let factory: Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static> = Arc::new(move || {
@@ -819,15 +775,18 @@ pub fn BlocksRenderer(
                                         padding_left: 4,
                                         padding_right: 2,
                                         margin_bottom: 1,
-                                        flex_direction: FlexDirection::Row,
                                         background_color: theme::DARK_BG,
                                     ) {
-                                        Text(content: prefix.clone(), color: theme::YELLOW, weight: Weight::Bold)
-                                        Text(content: before_win.clone(), color: theme::FG)
-                                        View(background_color: theme::BLUE) {
-                                            Text(content: cursor_char_str.clone(), color: theme::DARK_BG)
-                                        }
-                                        Text(content: after_win.clone(), color: theme::FG)
+                                        CursorInfo(
+                                            row: info_row,
+                                            col: info_col,
+                                            before: before_str.clone(),
+                                            cursor_char: cursor_char_str.clone(),
+                                            after: after_str.clone(),
+                                            show_arrow: Some(true),
+                                            cursor_bg: Some(theme::BLUE),
+                                            budget: Some(total),
+                                        )
                                     }
                                 }
                             }.into_any()

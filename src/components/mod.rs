@@ -1,5 +1,6 @@
 pub mod blocks_renderer;
 pub mod code_block;
+pub mod cursor_info;
 pub mod document;
 pub mod editor;
 pub mod heading;
