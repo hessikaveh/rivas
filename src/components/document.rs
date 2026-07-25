@@ -5,7 +5,7 @@ use iocraft::prelude::*;
 use crate::components::blocks_renderer::BlocksRenderer;
 use crate::components::cursor_info::CursorInfo;
 use crate::components::editor::{Buffer, EditorState, Mode, handle_key};
-use crate::components::scroll::{intent_from_key, scroll_delta, ScrollDelta, ScrollIntent};
+use crate::components::scroll::{intent_from_key, scroll_delta, ScrollDelta, ScrollIntent, Viewport};
 use crate::debug;
 use crate::document::cache::ParseCache;
 use crate::document::parser::parse_markdown;
@@ -281,9 +281,7 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
                         blocks: doc.blocks,
                         content: current_content,
                         file_path: file_path,
-                        viewport_height: vh,
-                        viewport_width: vw,
-                        scroll_offset: Some(scroll_handle.read().scroll_offset()),
+                        viewport: Some(Viewport::new(vh, vw, Some(scroll_handle.read().scroll_offset()))),
                         cursor_offset: props.cursor_offset.clone(),
                         editor_state: Some(editor_state.clone()),
                         scroll_handle: Some(scroll_handle.clone()),

@@ -1,4 +1,5 @@
 use crate::components::inline_renderer::render_inlines;
+use crate::components::scroll::Viewport;
 use crate::document::model::{Alignment, TableCell, inlines_to_text};
 use crate::theme;
 use iocraft::prelude::*;
@@ -10,8 +11,7 @@ pub struct TableBlockProps {
     pub alignments: Vec<Alignment>,
     pub rows: Vec<Vec<TableCell>>,
     pub file_path: PathBuf,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
@@ -27,7 +27,9 @@ pub fn TableBlock(props: &TableBlockProps, _hooks: Hooks) -> impl Into<AnyElemen
     }
 
     let max_table_width = props
-        .viewport_width
+        .viewport
+        .as_ref()
+        .and_then(|v| v.width)
         .unwrap_or(100)
         .saturating_sub(4)
         .max(20);
@@ -72,7 +74,7 @@ pub fn TableBlock(props: &TableBlockProps, _hooks: Hooks) -> impl Into<AnyElemen
                     element! {
                         View(width: col_widths[i], justify_content: justify, padding_left: 1, padding_right: 1) {
                             View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
-                                #(render_inlines(&cell.content, theme::CYAN, true, &props.file_path, props.viewport_height, props.viewport_width))
+                                #(render_inlines(&cell.content, theme::CYAN, true, Some(&props.file_path), props.viewport.as_ref().and_then(|v| v.height), props.viewport.as_ref().and_then(|v| v.width)))
                             }
                         }
                     }.into_any()
@@ -96,7 +98,7 @@ pub fn TableBlock(props: &TableBlockProps, _hooks: Hooks) -> impl Into<AnyElemen
                             element! {
                                 View(width: col_widths[col_idx], justify_content: justify, padding_left: 1, padding_right: 1) {
                                     View(flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap) {
-                                        #(render_inlines(&cell.content, theme::FG, false, &props.file_path, props.viewport_height, props.viewport_width))
+                                        #(render_inlines(&cell.content, theme::FG, false, Some(&props.file_path), props.viewport.as_ref().and_then(|v| v.height), props.viewport.as_ref().and_then(|v| v.width)))
                                     }
                                 }
                             }.into_any()

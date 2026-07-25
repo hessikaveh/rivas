@@ -9,6 +9,7 @@ use crate::components::math_block::MathBlock;
 use crate::components::mermaid_block::MermaidBlock;
 use crate::components::paragraph::Paragraph;
 use crate::components::quote_block::QuoteBlock;
+use crate::components::scroll::{Viewport, compute_scroll_into_view_target, visible_range_with_cursor};
 use crate::components::table_block::TableBlock;
 use crate::components::thematic_break::ThematicBreak;
 use crate::debug;
@@ -143,60 +144,26 @@ fn ScrollIntoViewContainer(
 
                         if viewport_h > 0 {
                             let scroll_off = scroll_ref.read().scroll_offset();
-                            let top_margin = 1;
-                            let effective_bottom = block_bottom_content + bottom_offset;
-                            let max_offset = (content_h - viewport_h).max(0);
-
-                            let mut target = scroll_off;
-
-                            if let Some(row) = cursor_row {
-                                // When the block is taller than the viewport,
-                                // use the cursor's row to compute a precise
-                                // scroll target so j/k keep the cursor visible
-                                // instead of only scrolling at block edges.
-                                let block_h = block_bottom_content - block_top_content;
-                                if block_h > viewport_h {
-                                    let cursor_content_pos = block_top_content + row;
-                                    // Keep cursor at the top margin when moving
-                                    // down past the viewport, or bring it back
-                                    // into view when moving up.
-                                    if cursor_content_pos < target + top_margin {
-                                        target = (cursor_content_pos - top_margin).max(0);
-                                    } else if cursor_content_pos >= target + viewport_h - 1 {
-                                        target = (cursor_content_pos - viewport_h + 2).max(0);
-                                    }
-                                } else {
-                                    // Block fits in viewport — use the original
-                                    // edge-based logic.
-                                    if block_top_content < target + top_margin {
-                                        target = (block_top_content - top_margin).max(0);
-                                    } else if effective_bottom > target + viewport_h {
-                                        let bottom_target = (effective_bottom - viewport_h).max(0);
-                                        if bottom_target < max_offset || target >= max_offset {
-                                            target = bottom_target.min(max_offset);
-                                        }
-                                    }
-                                }
-                            } else {
-                                // No cursor row info — fall back to block-edge logic.
-                                if block_top_content < target + top_margin {
-                                    target = (block_top_content - top_margin).max(0);
-                                } else if effective_bottom > target + viewport_h {
-                                    let bottom_target = (effective_bottom - viewport_h).max(0);
-                                    if bottom_target < max_offset || target >= max_offset {
-                                        target = bottom_target.min(max_offset);
-                                    }
-                                }
-                            }
-                            scroll_ref.write().scroll_to(target);
-                            debug::log_event(&debug::DebugEvent::CursorScroll {
-                                ts: debug::elapsed_ms(),
-                                block_top: block_top_content,
-                                block_bottom: block_bottom_content,
-                                scroll_off,
-                                target,
+                            let target = compute_scroll_into_view_target(
+                                block_top_content,
+                                block_bottom_content,
                                 viewport_h,
-                            });
+                                content_h,
+                                scroll_off,
+                                cursor_row,
+                                bottom_offset,
+                            );
+                            if let Some(target) = target {
+                                scroll_ref.write().scroll_to(target);
+                                debug::log_event(&debug::DebugEvent::CursorScroll {
+                                    ts: debug::elapsed_ms(),
+                                    block_top: block_top_content,
+                                    block_bottom: block_bottom_content,
+                                    scroll_off,
+                                    target,
+                                    viewport_h,
+                                });
+                            }
                         }
                         pending.set(false);
                     }
@@ -218,9 +185,7 @@ pub struct BlocksRendererProps {
     pub blocks: Vec<Block>,
     pub content: String,
     pub file_path: PathBuf,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
     pub cursor_offset: Option<Ref<usize>>,
     pub editor_state: Option<Ref<Option<EditorState>>>,
     pub scroll_handle: Option<Ref<ScrollViewHandle>>,
@@ -249,8 +214,8 @@ pub fn BlocksRenderer(
         cursor_offset_val,
     );
     let file_path = props.file_path.clone();
-    let vh = props.viewport_height;
-    let vw = props.viewport_width;
+    let vh = props.viewport.as_ref().and_then(|v| v.height);
+    let vw = props.viewport.as_ref().and_then(|v| v.width);
     let cursor_offset = props.cursor_offset.as_ref().map(|r| r.get());
 
     let (vis_start, vis_end, mode, is_editing_mode, cursor_row_col) =
@@ -300,35 +265,17 @@ pub fn BlocksRenderer(
     }
 
     // Binary search to find visible range using cached cumulative heights
-    let scroll_offset = props.scroll_offset.unwrap_or(0).max(0) as u32;
-    let viewport_h = props.viewport_height.unwrap_or(24);
+    let scroll_offset = props
+        .viewport
+        .as_ref()
+        .and_then(|v| v.scroll_offset)
+        .unwrap_or(0)
+        .max(0) as u32;
+    let viewport_h = props.viewport.as_ref().map(|v| v.height()).unwrap_or(24);
     let buffer = viewport_h * 2;
     let (heights, starts) = {
         let d = cum_data.read();
         (d.0.clone(), d.1.clone())
-    };
-
-    // Virtualization: only render blocks whose estimated height range overlaps
-    // [scroll_offset, scroll_offset + viewport_h + buffer]. Skipped blocks are
-    // replaced with estimated-height spacers so `ScrollView`'s measured
-    // `content_height` stays close to the true total. For Unicode text the
-    // estimates are accurate; for Kitty graphics (async image loads) there may
-    // be slight drift, but the auto-scroll / bottom-pinning still work well
-    // enough in practice.
-    // For small/medium documents the overhead of spacers and content_height
-    // drift is not worth it, so virtualization is only enabled above the
-    // threshold.
-    const VIRTUALIZE_THRESHOLD: usize = 500;
-    let (first_visible, last_visible) = if block_counts > VIRTUALIZE_THRESHOLD {
-        let fv = heights
-            .partition_point(|&h| h <= scroll_offset)
-            .saturating_sub(1);
-        let lv = heights
-            .partition_point(|&h| h <= scroll_offset + viewport_h as u32 + buffer)
-            .min(block_counts);
-        (fv, lv)
-    } else {
-        (0usize, block_counts)
     };
 
     // Binary search for cursor block using cached start offsets
@@ -340,8 +287,14 @@ pub fn BlocksRenderer(
         .unwrap_or(0)
         .min(block_counts.saturating_sub(1));
 
-    let first_visible = first_visible.min(cursor_block_idx);
-    let last_visible = last_visible.max(cursor_block_idx + 1);
+    let (first_visible, last_visible) = visible_range_with_cursor(
+        scroll_offset,
+        viewport_h as u32,
+        buffer,
+        &heights,
+        block_counts,
+        cursor_block_idx,
+    );
 
     // Log render tick for debug
     if props.debug {
@@ -355,7 +308,11 @@ pub fn BlocksRenderer(
                         row: s.row,
                         col: s.col,
                     },
-                    scroll: props.scroll_offset.unwrap_or(0),
+                    scroll: props
+                        .viewport
+                        .as_ref()
+                        .and_then(|v| v.scroll_offset)
+                        .unwrap_or(0),
                     content_height: props
                         .scroll_handle
                         .as_ref()
@@ -639,16 +596,16 @@ pub fn BlocksRenderer(
                     // If cursor is on this block (Normal mode), wrap with a left-border
                     // accent so the user can see where the cursor is before pressing `i`.
                     let rendered = match block {
-                        Block::Heading { level, content, id: _, .. } => element!{Heading(level: *level, content: content.clone(), file_path: file_path.clone(), viewport_height: vh, viewport_width: vw)}.into_any(),
-                        Block::Paragraph { content, .. } => element!{Paragraph(content: content.clone(), file_path: file_path.clone(), viewport_height: vh, viewport_width: vw)}.into_any(),
+                        Block::Heading { level, content, id: _, .. } => element!{Heading(level: *level, content: content.clone(), file_path: file_path.clone(), viewport: props.viewport.clone())}.into_any(),
+                        Block::Paragraph { content, .. } => element!{Paragraph(content: content.clone(), file_path: file_path.clone(), viewport: props.viewport.clone())}.into_any(),
                         Block::Code { language, code, .. } => element!{CodeBlock(language: language.clone(), code: code.clone())}.into_any(),
-                        Block::Mermaid { source, .. } => element!{MermaidBlock(source: source.clone(), viewport_height: vh, viewport_width: vw, scroll_offset: Some(scroll_offset as i32))}.into_any(),
-                        Block::Math { content, display, .. } => element!{MathBlock(content: content.clone(), display: *display, viewport_height: vh, viewport_width: vw, scroll_offset: Some(scroll_offset as i32))}.into_any(),
-                        Block::Quote { children, .. } => element!{QuoteBlock(children: children.clone(), file_path: Some(file_path.clone()), viewport_height: vh, viewport_width: vw)}.into_any(),
-                        Block::List { ordered, start, items, .. } => element!{ListBlock(ordered: *ordered, start: *start, items: items.clone(), file_path: file_path.clone(), viewport_height: vh, viewport_width: vw)}.into_any(),
-                        Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path.clone(), viewport_height: vh, viewport_width: vw)}.into_any(),
+                        Block::Mermaid { source, .. } => element!{MermaidBlock(source: source.clone(), viewport: props.viewport.clone())}.into_any(),
+                        Block::Math { content, display, .. } => element!{MathBlock(content: content.clone(), display: *display, viewport: props.viewport.clone())}.into_any(),
+                        Block::Quote { children, .. } => element!{QuoteBlock(children: children.clone(), file_path: Some(file_path.clone()), viewport: props.viewport.clone())}.into_any(),
+                        Block::List { ordered, start, items, .. } => element!{ListBlock(ordered: *ordered, start: *start, items: items.clone(), file_path: file_path.clone(), viewport: props.viewport.clone())}.into_any(),
+                        Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path.clone(), viewport: props.viewport.clone())}.into_any(),
                         Block::ThematicBreak{..} => element!{ThematicBreak()}.into_any(),
-                        Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path.clone(), title: title.clone(), alt: Some(alt.clone()), viewport_height: vh, viewport_width: vw, scroll_offset: Some(scroll_offset as i32))}.into_any(),
+                        Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path.clone(), title: title.clone(), alt: Some(alt.clone()), viewport: props.viewport.clone())}.into_any(),
                         Block::Html { content, .. } => element!{HtmlBlock(content: content.clone())}.into_any(),
                     };
 
@@ -734,30 +691,28 @@ pub fn BlocksRenderer(
 
                         let block_clone = block.clone();
                         let file_path_clone = file_path.clone();
-                        let vh_clone = vh;
-                        let vw_clone = vw;
+                        let viewport_clone = props.viewport.clone();
                         let before_str = before.to_string();
                         let cursor_char_str = cursor_char.to_string();
                         let after_str = after.to_string();
                         let cursor_row_col_clone = cursor_row_col.clone();
-
                         let info_row = cursor_row_col_clone.map(|(r, _)| r).unwrap_or(0);
                         let info_col = cursor_row_col_clone.map(|(_, c)| c).unwrap_or(0);
-                        let total = vw_clone.unwrap_or(80).saturating_sub(theme::TOTAL_VIEWPORT_OFFSET + 12) as usize;
+                        let total = viewport_clone.as_ref().map(|v| v.width()).unwrap_or(80)
+                            .saturating_sub(theme::TOTAL_VIEWPORT_OFFSET + 12) as usize;
 
-                        let so = scroll_offset as i32;
                         let factory: Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static> = Arc::new(move || {
                             let rendered = match &block_clone {
-                                Block::Heading { level, content, id: _, .. } => element!{Heading(level: *level, content: content.clone(), file_path: file_path_clone.clone(), viewport_height: vh_clone, viewport_width: vw_clone)}.into_any(),
-                                Block::Paragraph { content, .. } => element!{Paragraph(content: content.clone(), file_path: file_path_clone.clone(), viewport_height: vh_clone, viewport_width: vw_clone)}.into_any(),
+                                Block::Heading { level, content, id: _, .. } => element!{Heading(level: *level, content: content.clone(), file_path: file_path_clone.clone(), viewport: viewport_clone.clone())}.into_any(),
+                                Block::Paragraph { content, .. } => element!{Paragraph(content: content.clone(), file_path: file_path_clone.clone(), viewport: viewport_clone.clone())}.into_any(),
                                 Block::Code { language, code, .. } => element!{CodeBlock(language: language.clone(), code: code.clone())}.into_any(),
-                                Block::Mermaid { source, .. } => element!{MermaidBlock(source: source.clone(), viewport_height: vh_clone, viewport_width: vw_clone, scroll_offset: Some(so))}.into_any(),
-                                Block::Math { content, display, .. } => element!{MathBlock(content: content.clone(), display: *display, viewport_height: vh_clone, viewport_width: vw_clone, scroll_offset: Some(so))}.into_any(),
-                                Block::Quote { children, .. } => element!{QuoteBlock(children: children.clone(), file_path: Some(file_path_clone.clone()), viewport_height: vh_clone, viewport_width: vw_clone)}.into_any(),
-                                Block::List { ordered, start, items, .. } => element!{ListBlock(ordered: *ordered, start: *start, items: items.clone(), file_path: file_path_clone.clone(), viewport_height: vh_clone, viewport_width: vw_clone)}.into_any(),
-                                Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path_clone.clone(), viewport_height: vh_clone, viewport_width: vw_clone)}.into_any(),
+                                Block::Mermaid { source, .. } => element!{MermaidBlock(source: source.clone(), viewport: viewport_clone.clone())}.into_any(),
+                                Block::Math { content, display, .. } => element!{MathBlock(content: content.clone(), display: *display, viewport: viewport_clone.clone())}.into_any(),
+                                Block::Quote { children, .. } => element!{QuoteBlock(children: children.clone(), file_path: Some(file_path_clone.clone()), viewport: viewport_clone.clone())}.into_any(),
+                                Block::List { ordered, start, items, .. } => element!{ListBlock(ordered: *ordered, start: *start, items: items.clone(), file_path: file_path_clone.clone(), viewport: viewport_clone.clone())}.into_any(),
+                                Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path_clone.clone(), viewport: viewport_clone.clone())}.into_any(),
                                 Block::ThematicBreak{..} => element!{ThematicBreak()}.into_any(),
-                                Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path_clone.clone(), title: title.clone(), alt: Some(alt.clone()), viewport_height: vh_clone, viewport_width: vw_clone, scroll_offset: Some(so))}.into_any(),
+                                Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path_clone.clone(), title: title.clone(), alt: Some(alt.clone()), viewport: viewport_clone.clone())}.into_any(),
                                 Block::Html { content, .. } => element!{HtmlBlock(content: content.clone())}.into_any(),
                             };
 

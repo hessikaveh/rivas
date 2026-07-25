@@ -1082,6 +1082,7 @@ fn handle_visual(s: &mut EditorState, code: KeyCode) -> bool {
                 s.row = dest.0;
                 s.col = dest.1;
                 s.col_want = s.col;
+                s.needs_rerender = true;
             }
         }
     }

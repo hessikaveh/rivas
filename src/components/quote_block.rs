@@ -1,4 +1,5 @@
 use crate::components::blocks_renderer::BlocksRenderer;
+use crate::components::scroll::Viewport;
 use crate::document::model::Block;
 use crate::theme;
 use iocraft::prelude::*;
@@ -8,8 +9,7 @@ use std::path::PathBuf;
 pub struct QuoteBlockProps {
     pub children: Vec<Block>,
     pub file_path: Option<PathBuf>,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
@@ -23,8 +23,7 @@ pub fn QuoteBlock(props: &QuoteBlockProps, _hooks: Hooks) -> impl Into<AnyElemen
             BlocksRenderer(
                 blocks: props.children.clone(),
                 file_path: file_path,
-                viewport_height: props.viewport_height,
-                viewport_width: props.viewport_width,
+                viewport: props.viewport.clone(),
             )
         }
     }

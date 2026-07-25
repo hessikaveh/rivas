@@ -1,7 +1,7 @@
 use crate::assets::math::{
     MathMode, MathRender, bracket_glyphs, math_mode, render_math_unicode_ast,
 };
-use crate::components::scroll::ScrollPosition;
+use crate::components::scroll::{ScrollPosition, Viewport};
 use crate::debug;
 use crate::output::graphics_manager::{
     GfxRect, GfxSource, IMAGE_HEIGHT_CACHE, ReleaseGuard, acquire, detach, dims, gfx_error, place,
@@ -24,12 +24,7 @@ fn next_instance_id() -> u64 {
 pub struct MathBlockProps {
     pub content: String,
     pub display: bool,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    /// Current scroll offset in rows, from the owning ScrollView. When it
-    /// changes we re-run placement so a post-scroll frame with a stale canvas
-    /// rect does not leave the image detached at the wrong place.
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
@@ -37,7 +32,7 @@ pub fn MathBlock(props: &MathBlockProps, _hooks: Hooks) -> impl Into<AnyElement<
     if math_mode() == MathMode::Image {
         element! {
             View(margin_bottom: 1) {
-                KittyMath(content: props.content.clone(), display: props.display.clone(), viewport_height: props.viewport_height, viewport_width: props.viewport_width, scroll_offset: props.scroll_offset)
+                KittyMath(content: props.content.clone(), display: props.display.clone(), viewport: props.viewport.clone())
             }
         }
         .into_any()
@@ -197,15 +192,14 @@ pub fn MatrixMath(props: &MatrixMathProps, _hooks: Hooks) -> impl Into<AnyElemen
 pub struct KittyMathProps {
     pub content: String,
     pub display: bool,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
 pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    let vw = props.viewport_width.unwrap_or(100);
-    let vh = props.viewport_height.unwrap_or(100);
+    let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);
+    let vh = props.viewport.as_ref().and_then(|v| v.height).unwrap_or(100);
+    let scroll_offset = props.viewport.as_ref().and_then(|v| v.scroll_offset);
     // Unique per-occurrence key so identical formulas don't share a terminal
     // graphic id (which would let one occurrence's detach/place clobber others).
     let instance = hooks.use_ref(|| next_instance_id());
@@ -233,7 +227,7 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
     let mut error_msg = hooks.use_state(|| None::<String>);
     let mut sized = hooks.use_state(|| false);
     let mut acquired_key = hooks.use_ref(|| String::new());
-    let mut cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
+    let cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
     let caps_cache = hooks.use_ref(|| crate::output::capabilities::TermCaps::detect().ok());
     let mut scroll_pos = ScrollPosition::new();
 
@@ -284,7 +278,7 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
     if let Some(r) = rect {
         let x = r.left;
         let y_raw = r.top;
-        let so = props.scroll_offset.unwrap_or(scroll_pos.captured_scroll_offset());
+        let so = scroll_offset.unwrap_or(scroll_pos.captured_scroll_offset());
         scroll_pos.update(y_raw, so);
         let y = scroll_pos.y(so);
 

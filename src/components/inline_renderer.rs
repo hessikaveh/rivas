@@ -1,6 +1,7 @@
 use crate::assets::math::{MathMode, math_mode};
 use crate::components::image::KittyImage;
 use crate::components::math_block::{KittyMath, UnicodeMath};
+use crate::components::scroll::Viewport;
 use crate::document::model::Inline;
 use crate::theme;
 use iocraft::prelude::*;
@@ -11,7 +12,7 @@ pub fn render_inlines(
     inlines: &[Inline],
     base_color: Color,
     bold: bool,
-    file_path: &PathBuf,
+    file_path: Option<&PathBuf>,
     viewport_height: Option<u32>,
     viewport_width: Option<u32>,
 ) -> Vec<AnyElement<'static>> {
@@ -34,7 +35,7 @@ fn render_inlines_recursive(
     color: Color,
     bold: bool,
     italic: bool,
-    file_path: &PathBuf,
+    file_path: Option<&PathBuf>,
     viewport_height: Option<u32>,
     viewport_width: Option<u32>,
     out: &mut Vec<AnyElement<'static>>,
@@ -118,8 +119,9 @@ fn render_inlines_recursive(
             }
             Inline::Math(m) => {
                 if math_mode() == MathMode::Image {
+                    let vp = viewport_height.map(|h| Viewport { height: Some(h), width: viewport_width, scroll_offset: None });
                     out.push(element! {
-                        KittyMath(content: m.clone(), display: false, viewport_height: viewport_height, viewport_width: viewport_width)
+                        KittyMath(content: m.clone(), display: false, viewport: vp)
                     }.into_any());
                 } else {
                     out.push(
@@ -132,8 +134,9 @@ fn render_inlines_recursive(
             }
             Inline::Image { alt: _, url } => {
                 // For inline images, we use KittyImage directly without block margins
+                let vp = viewport_height.map(|h| Viewport { height: Some(h), width: viewport_width, scroll_offset: None });
                 out.push(element! {
-                    KittyImage(url: url.clone(), file_path: file_path.clone(), viewport_height: viewport_height, viewport_width: viewport_width)
+                    KittyImage(url: url.clone(), file_path: file_path.cloned().unwrap_or_default(), viewport: vp)
                 }.into_any());
             }
         }

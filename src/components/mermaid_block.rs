@@ -1,4 +1,4 @@
-use crate::components::scroll::ScrollPosition;
+use crate::components::scroll::{ScrollPosition, Viewport};
 use crate::debug;
 use crate::output::capabilities;
 use crate::output::graphics_manager::{
@@ -21,12 +21,7 @@ fn next_instance_id() -> u64 {
 #[derive(Default, Props)]
 pub struct MermaidBlockProps {
     pub source: String,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    /// Current scroll offset in rows, from the owning ScrollView. When it
-    /// changes we re-run placement so a post-scroll frame with a stale canvas
-    /// rect does not leave the image detached at the wrong place.
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
@@ -34,9 +29,9 @@ pub fn MermaidBlock(props: &MermaidBlockProps, _hooks: Hooks) -> impl Into<AnyEl
     element! {
        View(flex_direction: FlexDirection::Column, margin_bottom: 1) {
            #(if capabilities::has_kitty() {
-               Some(element! {
-                   KittyMermaid(source: props.source.clone(), viewport_height: props.viewport_height, viewport_width: props.viewport_width, scroll_offset: props.scroll_offset)
-               }.into_any())
+                Some(element! {
+                    KittyMermaid(source: props.source.clone(), viewport: props.viewport.clone())
+                }.into_any())
            } else {
                Some(element! {
                    View(flex_direction: FlexDirection::Column, margin_bottom: 1) {
@@ -54,15 +49,13 @@ pub fn MermaidBlock(props: &MermaidBlockProps, _hooks: Hooks) -> impl Into<AnyEl
 #[derive(Default, Props)]
 pub struct KittyMermaidProps {
     pub source: String,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
 pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    let vw = props.viewport_width.unwrap_or(100);
-    let vh = props.viewport_height.unwrap_or(100);
+    let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);
+    let vh = props.viewport.as_ref().and_then(|v| v.height).unwrap_or(100);
     // Unique per-occurrence key so identical diagrams don't share a terminal
     // graphic id (which would let one occurrence's detach/place clobber others).
     let instance = hooks.use_ref(|| next_instance_id());
@@ -84,7 +77,7 @@ pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<An
     let mut error_msg = hooks.use_state(|| None::<String>);
     let mut sized = hooks.use_state(|| false);
     let mut acquired_key = hooks.use_ref(|| String::new());
-    let mut cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
+    let cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
     let caps_cache = hooks.use_ref(|| crate::output::capabilities::TermCaps::detect().ok());
     let mut scroll_pos = ScrollPosition::new();
 
@@ -134,7 +127,7 @@ pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<An
     if let Some(r) = rect {
         let x = r.left;
         let y_raw = r.top;
-        let so = props.scroll_offset.unwrap_or(scroll_pos.captured_scroll_offset());
+        let so = props.viewport.as_ref().and_then(|v| v.scroll_offset).or(Some(scroll_pos.captured_scroll_offset())).unwrap();
         scroll_pos.update(y_raw, so);
         let y = scroll_pos.y(so);
 
