@@ -5,6 +5,7 @@ use iocraft::prelude::*;
 use crate::components::blocks_renderer::BlocksRenderer;
 use crate::components::cursor_info::CursorInfo;
 use crate::components::editor::{Buffer, EditorState, Mode, handle_key};
+use crate::components::scroll::{intent_from_key, scroll_delta, ScrollDelta, ScrollIntent};
 use crate::debug;
 use crate::document::cache::ParseCache;
 use crate::document::parser::parse_markdown;
@@ -221,80 +222,36 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
             }
 
             // Scroll and Navigation logic (Normal and Visual modes only)
-            let viewport_height = scroll_handle.read().viewport_height() as i32;
-            let page = viewport_height.max(1);
-            let half_page = (page / 2).max(1);
-
-            let old_scroll = scroll_handle.read().scroll_offset();
-
             let current_mode = editor_state
                 .read()
                 .as_ref()
                 .map(|s| s.mode.clone())
                 .unwrap_or(Mode::Normal);
-            // `G`/`End` pin the cursor to the bottom of the document. We use
-            // iocraft's *actually measured* content height (via
-            // `scroll_to_bottom`) rather than the editor's estimated block-height
-            // table, because the estimate over-states the real layout and would
-            // scroll past the true end, leaving the cursor off-screen below the
-            // viewport. The trailing phantom spacer was removed so `content_height`
-            // reflects the real document.
-            if !matches!(
+            let is_editing_mode = matches!(
                 current_mode,
                 Mode::Insert | Mode::Command | Mode::Search { .. }
-            ) {
-                match code {
-                    KeyCode::Char('g') if !ctrl && pending_g.get() => {
-                        scroll_handle.write().scroll_to_top();
-                        pending_g.set(false);
+            );
+            let (intent, new_pending_g) = intent_from_key(code, ctrl, pending_g.get(), is_editing_mode);
+            pending_g.set(new_pending_g);
+
+            let old_scroll = scroll_handle.read().scroll_offset();
+
+            if let ScrollIntent::None = intent { /* no-op */ } else {
+                let viewport_height = scroll_handle.read().viewport_height() as i32;
+                let delta = scroll_delta(intent, viewport_height);
+                match delta {
+                    ScrollDelta::Absolute(offset) => {
+                        scroll_handle.write().scroll_to(offset);
                     }
-                    KeyCode::Char('g') if !ctrl => {
-                        pending_g.set(true);
+                    ScrollDelta::Relative(d) => {
+                        scroll_handle.write().scroll_by(d);
                     }
-                    KeyCode::Char('G') if !ctrl => {
+                    ScrollDelta::ToEnd => {
                         scroll_handle.write().scroll_to_bottom();
-                        pending_g.set(false);
                         stick_to_bottom.set(true);
                     }
-                    KeyCode::End => {
-                        scroll_handle.write().scroll_to_bottom();
-                        pending_g.set(false);
-                        stick_to_bottom.set(true);
-                    }
-                    KeyCode::Char('d') if ctrl => {
-                        scroll_handle.write().scroll_by(half_page);
-                        pending_g.set(false);
-                    }
-                    KeyCode::Char('u') if ctrl => {
-                        scroll_handle.write().scroll_by(-half_page);
-                        pending_g.set(false);
-                    }
-                    KeyCode::Char('f') if ctrl => {
-                        scroll_handle.write().scroll_by(page);
-                        pending_g.set(false);
-                    }
-                    KeyCode::PageDown => {
-                        scroll_handle.write().scroll_by(page);
-                        pending_g.set(false);
-                    }
-                    KeyCode::Char('b') if ctrl => {
-                        scroll_handle.write().scroll_by(-page);
-                        pending_g.set(false);
-                    }
-                    KeyCode::PageUp => {
-                        scroll_handle.write().scroll_by(-page);
-                        pending_g.set(false);
-                    }
-                    KeyCode::Home => {
-                        scroll_handle.write().scroll_to_top();
-                        pending_g.set(false);
-                    }
-                    _ => {
-                        pending_g.set(false);
-                    }
+                    ScrollDelta::None => {}
                 }
-            } else {
-                pending_g.set(false);
             }
 
             let new_scroll = scroll_handle.read().scroll_offset();

@@ -1,6 +1,7 @@
 use crate::assets::math::{
     MathMode, MathRender, bracket_glyphs, math_mode, render_math_unicode_ast,
 };
+use crate::components::scroll::ScrollPosition;
 use crate::debug;
 use crate::output::graphics_manager::{
     GfxRect, GfxSource, IMAGE_HEIGHT_CACHE, ReleaseGuard, acquire, detach, dims, gfx_error, place,
@@ -234,13 +235,7 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
     let mut acquired_key = hooks.use_ref(|| String::new());
     let mut cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
     let caps_cache = hooks.use_ref(|| crate::output::capabilities::TermCaps::detect().ok());
-    // Real-layout invariant: `baseline = rect.top + scroll_offset` is constant
-    // across scrolls. Captured when the real canvas rect moves; `y` is then
-    // `baseline - scroll_offset`, correct even when `use_component_rect()` lags
-    // the scroll.
-    let mut baseline = hooks.use_ref(|| 0i32);
-    let mut baseline_scroll = hooks.use_ref(|| 0i32);
-    let mut last_rect_y = hooks.use_ref(|| i32::MIN);
+    let mut scroll_pos = ScrollPosition::new();
 
     if acquired_key.read().is_empty() || *acquired_key.read() != key {
         if !acquired_key.read().is_empty() {
@@ -289,19 +284,9 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
     if let Some(r) = rect {
         let x = r.left;
         let y_raw = r.top;
-        // Derive the correct vertical position from the scroll-invariant
-        // baseline. `baseline = y_raw + scroll_offset` is constant for the real
-        // layout, so recompute it only when the canvas rect actually moves.
-        // On a stale-rect frame `y_raw` is unchanged, so we keep the last good
-        // `baseline` and apply the current scroll. This makes `y` correct even
-        // when `use_component_rect()` lags the scroll.
-        let so = props.scroll_offset.unwrap_or(*baseline_scroll.read());
-        if y_raw != *last_rect_y.read() {
-            *baseline.write() = y_raw + so;
-            *baseline_scroll.write() = so;
-            *last_rect_y.write() = y_raw;
-        }
-        let y = *baseline.read() - so;
+        let so = props.scroll_offset.unwrap_or(scroll_pos.captured_scroll_offset());
+        scroll_pos.update(y_raw, so);
+        let y = scroll_pos.y(so);
 
         let pos = (x, y);
         if pos != drawn_at.get() {
