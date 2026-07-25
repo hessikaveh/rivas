@@ -162,10 +162,6 @@ impl Viewport {
         self.width.unwrap_or(80)
     }
 }
-///
-/// Given cumulative block heights, the current scroll offset, viewport
-/// height, and buffer size, returns `(first_visible, last_visible)`.
-/// Off-screen blocks are replaced with spacer Views of the same estimated
 /// Estimate the height of a block in terminal rows.
 pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u32 {
     let wrap_width = vw.unwrap_or(80) as usize;
@@ -210,6 +206,46 @@ pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u
     }
 }
 
+/// Build cumulative block heights and byte start offsets for virtual scrolling.
+/// Returns `(cumulative_heights, start_offsets)` where `cumulative_heights[i]`
+/// is the total height of blocks `0..i`, and `start_offsets[i]` is the byte
+/// offset of block `i` in the source content.
+pub fn build_cumulative_heights(
+    blocks: &[Block],
+    content: &str,
+    vw: Option<u32>,
+) -> (Vec<u32>, Vec<usize>) {
+    let mut cumulative = Vec::with_capacity(blocks.len() + 1);
+    let mut starts = Vec::with_capacity(blocks.len());
+    let mut total = 0u32;
+    cumulative.push(0);
+    for block in blocks {
+        starts.push(block.span().0);
+        total += estimate_block_height(block, content, vw);
+        cumulative.push(total);
+    }
+    (cumulative, starts)
+}
+
+/// Find the block index containing a given cursor byte offset using binary
+/// search on the precomputed start-offset array.
+pub fn find_cursor_block(
+    starts: &[usize],
+    cursor_offset: Option<usize>,
+    block_count: usize,
+) -> usize {
+    cursor_offset
+        .map(|off| match starts.binary_search(&off) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        })
+        .unwrap_or(0)
+        .min(block_count.saturating_sub(1))
+}
+
+/// Given cumulative block heights, the current scroll offset, viewport
+/// height, and buffer size, returns `(first_visible, last_visible)`.
+/// Off-screen blocks are replaced with spacer Views of the same estimated
 /// height so that ScrollView's measured `content_height` stays accurate.
 pub fn compute_visible_range(
     scroll_offset: u32,

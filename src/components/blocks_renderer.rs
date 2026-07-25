@@ -10,7 +10,8 @@ use crate::components::mermaid_block::MermaidBlock;
 use crate::components::paragraph::Paragraph;
 use crate::components::quote_block::QuoteBlock;
 use crate::components::scroll::{
-    Viewport, compute_scroll_into_view_target, estimate_block_height, visible_range_with_cursor,
+    Viewport, build_cumulative_heights, compute_scroll_into_view_target, estimate_block_height,
+    find_cursor_block, visible_range_with_cursor,
 };
 use crate::components::table_block::TableBlock;
 use crate::components::thematic_break::ThematicBreak;
@@ -199,16 +200,7 @@ pub fn BlocksRenderer(
     let mut cum_data = hooks.use_ref(|| (Vec::<u32>::new(), Vec::<usize>::new()));
     let mut cum_key_ref = hooks.use_ref(String::new);
     if *cum_key_ref.read() != cum_key {
-        let mut cumulative = Vec::with_capacity(block_counts + 1);
-        let mut starts = Vec::with_capacity(block_counts);
-        let mut total = 0u32;
-        cumulative.push(0);
-        for block in &props.blocks {
-            starts.push(block.span().0);
-            total += estimate_block_height(block, &props.content, vw);
-            cumulative.push(total);
-        }
-        cum_data.set((cumulative, starts));
+        cum_data.set(build_cumulative_heights(&props.blocks, &props.content, vw));
         cum_key_ref.set(cum_key);
     }
 
@@ -226,14 +218,7 @@ pub fn BlocksRenderer(
         (d.0.clone(), d.1.clone())
     };
 
-    // Binary search for cursor block using cached start offsets
-    let cursor_block_idx = cursor_offset
-        .map(|off| match starts.binary_search(&off) {
-            Ok(i) => i,
-            Err(i) => i.saturating_sub(1),
-        })
-        .unwrap_or(0)
-        .min(block_counts.saturating_sub(1));
+    let cursor_block_idx = find_cursor_block(&starts, cursor_offset, block_counts);
 
     let (first_visible, last_visible) = visible_range_with_cursor(
         scroll_offset,
