@@ -304,7 +304,7 @@ pub fn BlocksRenderer(
                             span.1
                         };
                         let text = &props.content[span.0..text_end];
-                        let rel_off = (off - span.0).min(text.len());
+                        let rel_off = off.saturating_sub(span.0).min(text.len());
 
                         let lines: Vec<&str> = text.split('\n').collect();
                         let mut current_byte_acc = 0;
