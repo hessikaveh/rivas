@@ -119,10 +119,17 @@ fn render_inlines_recursive(
             }
             Inline::Math(m) => {
                 if math_mode() == MathMode::Image {
-                    let vp = viewport_height.map(|h| Viewport { height: Some(h), width: viewport_width, scroll_offset: None });
-                    out.push(element! {
-                        KittyMath(content: m.clone(), display: false, viewport: vp)
-                    }.into_any());
+                    let vp = viewport_height.map(|h| Viewport {
+                        height: Some(h),
+                        width: viewport_width,
+                        scroll_offset: None,
+                    });
+                    out.push(
+                        element! {
+                            KittyMath(content: m.clone(), display: false, viewport: vp)
+                        }
+                        .into_any(),
+                    );
                 } else {
                     out.push(
                         element! {
@@ -134,7 +141,11 @@ fn render_inlines_recursive(
             }
             Inline::Image { alt: _, url } => {
                 // For inline images, we use KittyImage directly without block margins
-                let vp = viewport_height.map(|h| Viewport { height: Some(h), width: viewport_width, scroll_offset: None });
+                let vp = viewport_height.map(|h| Viewport {
+                    height: Some(h),
+                    width: viewport_width,
+                    scroll_offset: None,
+                });
                 out.push(element! {
                     KittyImage(url: url.clone(), file_path: file_path.cloned().unwrap_or_default(), viewport: vp)
                 }.into_any());

@@ -1,5 +1,5 @@
-use crate::components::scroll::Viewport;
 use crate::components::inline_renderer::render_inlines;
+use crate::components::scroll::Viewport;
 use crate::document::model::Inline;
 use crate::theme;
 use iocraft::prelude::*;

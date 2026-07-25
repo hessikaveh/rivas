@@ -198,7 +198,11 @@ pub struct KittyMathProps {
 #[component]
 pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);
-    let vh = props.viewport.as_ref().and_then(|v| v.height).unwrap_or(100);
+    let vh = props
+        .viewport
+        .as_ref()
+        .and_then(|v| v.height)
+        .unwrap_or(100);
     let scroll_offset = props.viewport.as_ref().and_then(|v| v.scroll_offset);
     // Unique per-occurrence key so identical formulas don't share a terminal
     // graphic id (which would let one occurrence's detach/place clobber others).

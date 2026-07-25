@@ -61,7 +61,11 @@ pub struct KittyImageProps {
 #[component]
 pub fn KittyImage(props: &KittyImageProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);
-    let vh = props.viewport.as_ref().and_then(|v| v.height).unwrap_or(100);
+    let vh = props
+        .viewport
+        .as_ref()
+        .and_then(|v| v.height)
+        .unwrap_or(100);
     // Unique per-occurrence key so identical images don't share a terminal
     // graphic id (which would let one occurrence's detach/place clobber others).
     let instance = hooks.use_ref(|| next_instance_id());
@@ -146,7 +150,12 @@ pub fn KittyImage(props: &KittyImageProps, mut hooks: Hooks) -> impl Into<AnyEle
     if let Some(r) = rect {
         let x = r.left;
         let y_raw = r.top;
-        let so = props.viewport.as_ref().and_then(|v| v.scroll_offset).or(Some(scroll_pos.captured_scroll_offset())).unwrap();
+        let so = props
+            .viewport
+            .as_ref()
+            .and_then(|v| v.scroll_offset)
+            .or(Some(scroll_pos.captured_scroll_offset()))
+            .unwrap();
         scroll_pos.update(y_raw, so);
         let y = scroll_pos.y(so);
 

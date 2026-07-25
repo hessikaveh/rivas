@@ -244,7 +244,11 @@ pub fn compute_scroll_into_view_target(
         }
     }
 
-    if target != scroll_off { Some(target) } else { None }
+    if target != scroll_off {
+        Some(target)
+    } else {
+        None
+    }
 }
 
 /// Like [`compute_visible_range`] but enforces a minimum block count
@@ -364,7 +368,10 @@ mod tests {
 
     #[test]
     fn delta_absolute_top() {
-        assert_eq!(scroll_delta(ScrollIntent::ToTop, 24), ScrollDelta::Absolute(0));
+        assert_eq!(
+            scroll_delta(ScrollIntent::ToTop, 24),
+            ScrollDelta::Absolute(0)
+        );
     }
 
     #[test]
@@ -374,17 +381,26 @@ mod tests {
 
     #[test]
     fn delta_page_down() {
-        assert_eq!(scroll_delta(ScrollIntent::PageDown, 24), ScrollDelta::Relative(24));
+        assert_eq!(
+            scroll_delta(ScrollIntent::PageDown, 24),
+            ScrollDelta::Relative(24)
+        );
     }
 
     #[test]
     fn delta_half_page_down() {
-        assert_eq!(scroll_delta(ScrollIntent::HalfPageDown, 24), ScrollDelta::Relative(12));
+        assert_eq!(
+            scroll_delta(ScrollIntent::HalfPageDown, 24),
+            ScrollDelta::Relative(12)
+        );
     }
 
     #[test]
     fn delta_page_up() {
-        assert_eq!(scroll_delta(ScrollIntent::PageUp, 24), ScrollDelta::Relative(-24));
+        assert_eq!(
+            scroll_delta(ScrollIntent::PageUp, 24),
+            ScrollDelta::Relative(-24)
+        );
     }
 
     // ── compute_visible_range tests ────────────────────────────

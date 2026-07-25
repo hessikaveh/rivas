@@ -9,7 +9,9 @@ use crate::components::math_block::MathBlock;
 use crate::components::mermaid_block::MermaidBlock;
 use crate::components::paragraph::Paragraph;
 use crate::components::quote_block::QuoteBlock;
-use crate::components::scroll::{Viewport, compute_scroll_into_view_target, visible_range_with_cursor};
+use crate::components::scroll::{
+    Viewport, compute_scroll_into_view_target, visible_range_with_cursor,
+};
 use crate::components::table_block::TableBlock;
 use crate::components::thematic_break::ThematicBreak;
 use crate::debug;
@@ -411,117 +413,143 @@ pub fn BlocksRenderer(
                         (theme::DARK_BG, cursor_bg, " ")
                     };
 
-                    element! {
-                        View(
-                            background_color: theme::DARK_BG,
-                            padding_left: 2,
-                            padding_right: 2,
-                            flex_direction: FlexDirection::Column,
-                            overflow: Overflow::Hidden,
-                        ) {
-                            #(lines.iter().enumerate().map(|(idx, line)| {
-                                let line_start_off = span.0 + lines[..idx].iter().map(|l| l.len() + 1).sum::<usize>();
-                                let wrap_width = (vw.unwrap_or(80) as i32 - theme::TOTAL_VIEWPORT_OFFSET as i32).max(1) as usize;
-                                let mut segments = Vec::new();
-                                let mut remaining: &str = line;
-                                while !remaining.is_empty() {
-                                    // Implement word-aware wrapping to match iocraft's TextWrap::Wrap
-                                    let mut split_at = remaining.char_indices().nth(wrap_width).map(|(i, _)| i).unwrap_or(remaining.len());
+                    // Convert to owned strings for the factory closure
+                    let lines_owned: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+                    let span_siv = span;
+                    let vw_siv = vw;
+                    let vis_start_siv = vis_start;
+                    let vis_end_siv = vis_end;
+                    let mode_siv = mode.clone();
+                    let cursor_line_idx_siv = cursor_line_idx;
+                    let cursor_rel_off_siv = cursor_rel_off;
+                    let cursor_char_siv = cursor_char.to_string();
+                    let cursor_fg_siv = cursor_fg;
+                    let cursor_bg_final_siv = cursor_bg_final.clone();
+                    let editor_state_siv = props.editor_state.clone();
+                    let scroll_handle_siv = props.scroll_handle.clone();
 
-                                    if split_at < remaining.len() {
-                                        // Try to find the last whitespace before the wrap point
-                                        if let Some(last_space) = remaining[..split_at].rfind(' ') {
-                                            // Only wrap at space if the word being split is not the only thing on the line
-                                            if last_space > 0 {
-                                                split_at = last_space + 1;
+                    let viewport_parts_siv = (props.viewport.as_ref().and_then(|v| v.height), props.viewport.as_ref().and_then(|v| v.width));
+
+                    let factory: Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static> = Arc::new(move || {
+                        element! {
+                            View(
+                                background_color: theme::DARK_BG,
+                                padding_left: 2,
+                                padding_right: 2,
+                                flex_direction: FlexDirection::Column,
+                                overflow: Overflow::Hidden,
+                            ) {
+                                #(lines_owned.iter().enumerate().map(|(idx, line)| {
+                                    let line_start_off = span_siv.0 + lines_owned[..idx].iter().map(|l| l.len() + 1).sum::<usize>();
+                                    let wrap_width = (vw_siv.unwrap_or(80) as i32 - theme::TOTAL_VIEWPORT_OFFSET as i32).max(1) as usize;
+                                    let mut segments = Vec::new();
+                                    let mut remaining: &str = line;
+                                    while !remaining.is_empty() {
+                                        let mut split_at = remaining.char_indices().nth(wrap_width).map(|(i, _)| i).unwrap_or(remaining.len());
+
+                                        if split_at < remaining.len() {
+                                            if let Some(last_space) = remaining[..split_at].rfind(' ') {
+                                                if last_space > 0 {
+                                                    split_at = last_space + 1;
+                                                }
                                             }
                                         }
+                                        segments.push(&remaining[..split_at]);
+                                        remaining = &remaining[split_at..];
                                     }
-                                    segments.push(&remaining[..split_at]);
-                                    remaining = &remaining[split_at..];
-                                }
-                                if segments.is_empty() {
-                                    segments.push("");
-                                }
+                                    if segments.is_empty() {
+                                        segments.push("");
+                                    }
 
-                                element! {
-                                    View(flex_direction: FlexDirection::Column) {
-                                        #(segments.iter().enumerate().map(|(seg_idx, segment)| {
-                                            if mode == Mode::Visual {
-                                                if let (Some(start), Some(end)) = (vis_start, vis_end) {
-                                                    let seg_start_off = line_start_off + segments[..seg_idx].iter().map(|s| s.len()).sum::<usize>();
-                                                    let mut line_parts: Vec<(bool, String)> = Vec::new();
-                                                    let mut current_pos = seg_start_off;
-                                                    let seg_chars: Vec<char> = segment.chars().collect();
-                                                    for c in seg_chars {
-                                                        let char_len = c.len_utf8();
-                                                        let is_selected = current_pos >= start && current_pos <= end;
-                                                        if let Some(last) = line_parts.last_mut() {
-                                                            if last.0 == is_selected {
-                                                                last.1.push(c);
-                                                                current_pos += char_len;
-                                                                continue;
+                                    element! {
+                                        View(flex_direction: FlexDirection::Column) {
+                                            #(segments.iter().enumerate().map(|(seg_idx, segment)| {
+                                                if mode_siv == Mode::Visual {
+                                                    if let (Some(start), Some(end)) = (vis_start_siv, vis_end_siv) {
+                                                        let seg_start_off = line_start_off + segments[..seg_idx].iter().map(|s| s.len()).sum::<usize>();
+                                                        let mut line_parts: Vec<(bool, String)> = Vec::new();
+                                                        let mut current_pos = seg_start_off;
+                                                        let seg_chars: Vec<char> = segment.chars().collect();
+                                                        for c in seg_chars {
+                                                            let char_len = c.len_utf8();
+                                                            let is_selected = current_pos >= start && current_pos <= end;
+                                                            if let Some(last) = line_parts.last_mut() {
+                                                                if last.0 == is_selected {
+                                                                    last.1.push(c);
+                                                                    current_pos += char_len;
+                                                                    continue;
+                                                                }
                                                             }
+                                                            line_parts.push((is_selected, c.to_string()));
+                                                            current_pos += char_len;
                                                         }
-                                                        line_parts.push((is_selected, c.to_string()));
-                                                        current_pos += char_len;
+                                                        element! {
+                                                            View(flex_direction: FlexDirection::Row) {
+                                                                #(line_parts.iter().map(|(selected, text)| element! {
+                                                                    Text(content: text.clone(), color: if *selected { theme::MAGENTA } else { theme::FG }, wrap: TextWrap::Wrap)
+                                                                }))
+                                                            }
+                                                        }.into_any()
+                                                    } else {
+                                                        element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
                                                     }
-                                                    element! {
-                                                        View(flex_direction: FlexDirection::Row) {
-                                                            #(line_parts.iter().map(|(selected, text)| element! {
-                                                                Text(content: text.clone(), color: if *selected { theme::MAGENTA } else { theme::FG }, wrap: TextWrap::Wrap)
-                                                            }))
-                                                        }
-                                                    }.into_any()
-                                                } else {
-                                                    element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
-                                                }
-                                            } else if Some(idx) == cursor_line_idx {
-                                                let mut seg_idx_cursor = 0;
-                                                let mut seg_rel_off = cursor_rel_off;
-                                                for seg in &segments {
-                                                    if seg_rel_off <= seg.len() { break; }
-                                                    seg_rel_off -= seg.len();
-                                                    seg_idx_cursor += 1;
-                                                }
-                                                if seg_idx == seg_idx_cursor {
-                                                    let (before, after_with_char) = segment.split_at(seg_rel_off.min(segment.len()));
+                                                } else if Some(idx) == cursor_line_idx_siv {
+                                                    let mut seg_idx_cursor = 0;
+                                                    let mut seg_rel_off = cursor_rel_off_siv;
+                                                    for seg in &segments {
+                                                        if seg_rel_off <= seg.len() { break; }
+                                                        seg_rel_off -= seg.len();
+                                                        seg_idx_cursor += 1;
+                                                    }
+                                                    if seg_idx == seg_idx_cursor {
+                                                        let (before, after_with_char) = segment.split_at(seg_rel_off.min(segment.len()));
 
-                                                    let before_str = before.to_string();
-                                                    let cursor_char_str = cursor_char.to_string();
-                                                    let cursor_bg_final_clone = cursor_bg_final.clone();
-                                                    let cursor_fg_clone = cursor_fg.clone();
-                                                    let editor_state_clone = props.editor_state.clone();
+                                                        let before_str = before.to_string();
+                                                        let cursor_char_str = cursor_char_siv.clone();
+                                                        let cursor_bg_final_clone = cursor_bg_final_siv.clone();
+                                                        let cursor_fg_clone = cursor_fg_siv;
+                                                        let editor_state_clone = editor_state_siv.clone();
 
-                                                    let factory = if let Some(c) = after_with_char.chars().next() {
-                                                        let char_len = c.len_utf8();
-                                                        let after_str = after_with_char[char_len..].to_string();
-                                                        let c_str = c.to_string();
+                                                        let inner_factory: Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static> = if let Some(c) = after_with_char.chars().next() {
+                                                            let char_len = c.len_utf8();
+                                                            let after_str = after_with_char[char_len..].to_string();
+                                                            let c_str = c.to_string();
 
-                                                        Arc::new(move || {
-                                                            if let Some(state_ref) = &editor_state_clone {
-                                                                let s_opt = state_ref.read();
-                                                                if let Some(s) = s_opt.as_ref() {
-                                                                    if s.mode == Mode::Insert {
-                                                                        element! {
-                                                                            View(flex_direction: FlexDirection::Row) {
-                                                                                Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
-                                                                                View(background_color: cursor_bg_final_clone, width: 1) {
-                                                                                    Text(content: cursor_char_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
+                                                            Arc::new(move || {
+                                                                if let Some(state_ref) = &editor_state_clone {
+                                                                    let s_opt = state_ref.read();
+                                                                    if let Some(s) = s_opt.as_ref() {
+                                                                        if s.mode == Mode::Insert {
+                                                                            element! {
+                                                                                View(flex_direction: FlexDirection::Row) {
+                                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    View(background_color: cursor_bg_final_clone, width: 1) {
+                                                                                        Text(content: cursor_char_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
+                                                                                    }
+                                                                                    Text(content: format!("{}{}", c_str, after_str), color: theme::FG, wrap: TextWrap::Wrap)
                                                                                 }
-                                                                                Text(content: format!("{}{}", c_str, after_str), color: theme::FG, wrap: TextWrap::Wrap)
-                                                                            }
-                                                                        }.into_any()
-                                                                    } else if s.operator.is_some() {
-                                                                        element! {
-                                                                            View(flex_direction: FlexDirection::Row) {
-                                                                                Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
-                                                                                View(background_color: cursor_bg_final_clone, width: 1) {
-                                                                                    Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
+                                                                            }.into_any()
+                                                                        } else if s.operator.is_some() {
+                                                                            element! {
+                                                                                View(flex_direction: FlexDirection::Row) {
+                                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    View(background_color: cursor_bg_final_clone, width: 1) {
+                                                                                        Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
+                                                                                    }
+                                                                                    Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
                                                                                 }
-                                                                                Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
-                                                                            }
-                                                                        }.into_any()
+                                                                            }.into_any()
+                                                                        } else {
+                                                                            element! {
+                                                                                View(flex_direction: FlexDirection::Row) {
+                                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    View(background_color: cursor_bg_final_clone, width: 1) {
+                                                                                        Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
+                                                                                    }
+                                                                                    Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                }
+                                                                            }.into_any()
+                                                                        }
                                                                     } else {
                                                                         element! {
                                                                             View(flex_direction: FlexDirection::Row) {
@@ -544,52 +572,52 @@ pub fn BlocksRenderer(
                                                                         }
                                                                     }.into_any()
                                                                 }
-                                                            } else {
+                                                            })
+                                                        } else {
+                                                            Arc::new(move || {
                                                                 element! {
                                                                     View(flex_direction: FlexDirection::Row) {
                                                                         Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
                                                                         View(background_color: cursor_bg_final_clone, width: 1) {
-                                                                            Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
+                                                                            Text(content: cursor_char_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                         }
-                                                                        Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                        Text(content: "", color: theme::FG, wrap: TextWrap::Wrap)
                                                                     }
                                                                 }.into_any()
-                                                            }
-                                                        }) as Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static>
-                                                    } else {
-                                                        Arc::new(move || {
-                                                            element! {
-                                                                View(flex_direction: FlexDirection::Row) {
-                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
-                                                                    View(background_color: cursor_bg_final_clone, width: 1) {
-                                                                        Text(content: cursor_char_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
-                                                                    }
-                                                                    Text(content: "", color: theme::FG, wrap: TextWrap::Wrap)
-                                                                }
-                                                            }.into_any()
-                                                        }) as Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static>
-                                                    };
+                                                            })
+                                                        };
 
-                                                    element! {
-                                                        ScrollIntoViewContainer(
-                                                            scroll_handle: props.scroll_handle.clone(),
-                                                            cursor_moved,
-                                                            child: Some(factory),
-                                                            cursor_row: cursor_line_idx.map(|r| r as i32),
-                                                            bottom_offset: Some(0),
-                                                        )
-                                                    }.into_any()
+                                                        element! {
+                                                            ScrollIntoViewContainer(
+                                                                scroll_handle: scroll_handle_siv.clone(),
+                                                                cursor_moved,
+                                                                child: Some(inner_factory),
+                                                                cursor_row: cursor_line_idx_siv.map(|r| r as i32),
+                                                                bottom_offset: Some(0),
+                                                            )
+                                                        }.into_any()
+                                                    } else {
+                                                        element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
+                                                    }
                                                 } else {
                                                     element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
                                                 }
-                                            } else {
-                                                element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
-                                            }
-                                        }))
-                                    }
-                                }.into_any()
-                            }))
-                        }
+                                            }))
+                                        }
+                                    }.into_any()
+                                }))
+                            }
+                        }.into_any()
+                    });
+
+                    element! {
+                        ScrollIntoViewContainer(
+                            scroll_handle: scroll_handle_siv,
+                            cursor_moved,
+                            child: Some(factory),
+                            cursor_row: cursor_line_idx.map(|r| r as i32),
+                            bottom_offset: Some(0),
+                        )
                     }.into_any()
                 } else {
                     // Render block as formatted markdown.

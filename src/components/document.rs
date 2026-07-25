@@ -5,7 +5,9 @@ use iocraft::prelude::*;
 use crate::components::blocks_renderer::BlocksRenderer;
 use crate::components::cursor_info::CursorInfo;
 use crate::components::editor::{Buffer, EditorState, Mode, handle_key};
-use crate::components::scroll::{intent_from_key, scroll_delta, ScrollDelta, ScrollIntent, Viewport};
+use crate::components::scroll::{
+    ScrollDelta, ScrollIntent, Viewport, intent_from_key, scroll_delta,
+};
 use crate::debug;
 use crate::document::cache::ParseCache;
 use crate::document::parser::parse_markdown;
@@ -231,12 +233,14 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
                 current_mode,
                 Mode::Insert | Mode::Command | Mode::Search { .. }
             );
-            let (intent, new_pending_g) = intent_from_key(code, ctrl, pending_g.get(), is_editing_mode);
+            let (intent, new_pending_g) =
+                intent_from_key(code, ctrl, pending_g.get(), is_editing_mode);
             pending_g.set(new_pending_g);
 
             let old_scroll = scroll_handle.read().scroll_offset();
 
-            if let ScrollIntent::None = intent { /* no-op */ } else {
+            if let ScrollIntent::None = intent { /* no-op */
+            } else {
                 let viewport_height = scroll_handle.read().viewport_height() as i32;
                 let delta = scroll_delta(intent, viewport_height);
                 match delta {
