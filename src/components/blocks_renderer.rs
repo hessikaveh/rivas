@@ -171,8 +171,7 @@ fn ScrollIntoViewContainer(
                                     if block_top_content < target + top_margin {
                                         target = (block_top_content - top_margin).max(0);
                                     } else if effective_bottom > target + viewport_h {
-                                        let bottom_target =
-                                            (effective_bottom - viewport_h).max(0);
+                                        let bottom_target = (effective_bottom - viewport_h).max(0);
                                         if bottom_target < max_offset || target >= max_offset {
                                             target = bottom_target.min(max_offset);
                                         }
@@ -183,8 +182,7 @@ fn ScrollIntoViewContainer(
                                 if block_top_content < target + top_margin {
                                     target = (block_top_content - top_margin).max(0);
                                 } else if effective_bottom > target + viewport_h {
-                                    let bottom_target =
-                                        (effective_bottom - viewport_h).max(0);
+                                    let bottom_target = (effective_bottom - viewport_h).max(0);
                                     if bottom_target < max_offset || target >= max_offset {
                                         target = bottom_target.min(max_offset);
                                     }

@@ -60,12 +60,7 @@ pub fn CursorInfo(props: &CursorInfoProps) -> impl Into<AnyElement<'static>> {
     } else {
         ""
     };
-    let prefix = format!(
-        "{}Ln {}, Col {}: ",
-        arrow,
-        props.row + 1,
-        props.col
-    );
+    let prefix = format!("{}Ln {}, Col {}: ", arrow, props.row + 1, props.col);
     let prefix_width = UnicodeWidthStr::width(prefix.as_str());
 
     let total = props.budget.unwrap_or(60);
