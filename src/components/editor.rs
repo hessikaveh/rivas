@@ -1025,6 +1025,7 @@ fn handle_search(s: &mut EditorState, code: KeyCode, forward: bool) -> bool {
             s.search_forward = forward;
             s.cmd_buf.clear();
             s.mode = Mode::Normal;
+            s.needs_rerender = true;
             do_search(s, forward);
         }
         KeyCode::Backspace => {
@@ -1316,12 +1317,14 @@ fn handle_normal(s: &mut EditorState, code: KeyCode, ctrl: bool) -> bool {
         }
         KeyCode::Char('n') => {
             do_search(s, s.search_forward);
+            s.needs_rerender = true;
             s.count_buf.clear();
             return false;
         }
         KeyCode::Char('N') => {
             let fwd = !s.search_forward;
             do_search(s, fwd);
+            s.needs_rerender = true;
             s.count_buf.clear();
             return false;
         }
