@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use iocraft::prelude::*;
 
 use crate::components::blocks_renderer::BlocksRenderer;
+use crate::components::cursor_info::CursorInfo;
 use crate::components::editor::{Buffer, EditorState, Mode, handle_key};
 use crate::debug;
 use crate::document::cache::ParseCache;
@@ -49,6 +50,23 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
         .as_ref()
         .map(|s| s.cmd_buf.clone())
         .unwrap_or_default();
+    let cursor_row_col = state_guard.as_ref().and_then(|s| Some((s.row, s.col)));
+    let cursor_line_preview = state_guard.as_ref().and_then(|s| {
+        let (row, col) = (s.row, s.col);
+        let line = s.buf.line(row);
+        let before = &line[..col.min(line.len())];
+        let (cursor_ch, after) = if col < line.len() {
+            let c = line[col..].chars().next()?;
+            let char_len = c.len_utf8();
+            (
+                c.to_string(),
+                line[(col + char_len).min(line.len())..].to_string(),
+            )
+        } else {
+            (" ".to_string(), String::new())
+        };
+        Some((before.to_string(), cursor_ch, after))
+    });
     drop(state_guard);
 
     // To trigger re-renders on edit
@@ -337,6 +355,30 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
                         })
                     }.into_iter())
                 }
+                #(if let Some((row, col)) = cursor_row_col {
+                    if !matches!(current_mode, Mode::Command | Mode::Search { .. }) {
+                        let (before_win, cursor_ch, after_win) = cursor_line_preview
+                            .unwrap_or_default();
+                        let total = vw.unwrap_or(80).saturating_sub(theme::TOTAL_VIEWPORT_OFFSET + 12) as usize;
+                        Some(element! {
+                            View(padding_right: 1) {
+                                CursorInfo(
+                                    row: row,
+                                    col: col,
+                                    before: before_win,
+                                    cursor_char: cursor_ch,
+                                    after: after_win,
+                                    prefix_color: Some(theme::COMMENT),
+                                    budget: Some(total),
+                                )
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }.into_iter())
             }
         }
     }

@@ -1,4 +1,5 @@
 use crate::components::code_block::CodeBlock;
+use crate::components::cursor_info::CursorInfo;
 use crate::components::editor::{EditorState, Mode};
 use crate::components::heading::Heading;
 use crate::components::html_block::HtmlBlock;
@@ -17,39 +18,6 @@ use crate::theme;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-// "… rest of the truncated text"
-fn tail_to_width(s: &str, max: usize) -> String {
-    let mut out = String::new();
-    let mut width = 0usize;
-    for ch in s.chars().rev() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + w > max {
-            out.insert(0, '…');
-            break;
-        }
-        out.insert(0, ch);
-        width += w;
-    }
-    out
-}
-
-// "first part of the truncated text …"
-fn head_to_width(s: &str, max: usize) -> String {
-    let mut out = String::new();
-    let mut width = 0usize;
-    for ch in s.chars() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + w > max {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
-        width += w;
-    }
-    out
-}
 
 // Estimate the height of a block in terminal rows
 pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u32 {
@@ -110,6 +78,12 @@ struct ScrollIntoViewContainerProps {
     pub scroll_handle: Option<Ref<ScrollViewHandle>>,
     pub cursor_moved: bool,
     pub child: Option<Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static>>,
+    /// Row of the cursor within this block (0-indexed). Used for precise
+    /// scroll-into-view when the block is taller than the viewport.
+    pub cursor_row: Option<i32>,
+    /// Extra rows below the block content to keep visible (e.g. the status
+    /// box showing "Ln X, Col Y: ...").
+    pub bottom_offset: Option<i32>,
 }
 
 #[component]
@@ -150,6 +124,8 @@ fn ScrollIntoViewContainer(
             let mut pending = pending.clone();
             let scroll_handle = props.scroll_handle.clone();
             let baseline = baseline.clone();
+            let cursor_row = props.cursor_row;
+            let bottom_offset = props.bottom_offset.unwrap_or(0);
             move || {
                 // Only consume the pending request once we actually have a
                 // baseline (i.e. `use_component_rect` has reported at least one
@@ -168,15 +144,48 @@ fn ScrollIntoViewContainer(
                         if viewport_h > 0 {
                             let scroll_off = scroll_ref.read().scroll_offset();
                             let top_margin = 1;
+                            let effective_bottom = block_bottom_content + bottom_offset;
                             let max_offset = (content_h - viewport_h).max(0);
 
                             let mut target = scroll_off;
-                            if block_top_content < target + top_margin {
-                                target = (block_top_content - top_margin).max(0);
-                            } else if block_bottom_content > target + viewport_h {
-                                let bottom_target = (block_bottom_content - viewport_h).max(0);
-                                if bottom_target < max_offset || target >= max_offset {
-                                    target = bottom_target.min(max_offset);
+
+                            if let Some(row) = cursor_row {
+                                // When the block is taller than the viewport,
+                                // use the cursor's row to compute a precise
+                                // scroll target so j/k keep the cursor visible
+                                // instead of only scrolling at block edges.
+                                let block_h = block_bottom_content - block_top_content;
+                                if block_h > viewport_h {
+                                    let cursor_content_pos = block_top_content + row;
+                                    // Keep cursor at the top margin when moving
+                                    // down past the viewport, or bring it back
+                                    // into view when moving up.
+                                    if cursor_content_pos < target + top_margin {
+                                        target = (cursor_content_pos - top_margin).max(0);
+                                    } else if cursor_content_pos >= target + viewport_h - 1 {
+                                        target = (cursor_content_pos - viewport_h + 2).max(0);
+                                    }
+                                } else {
+                                    // Block fits in viewport — use the original
+                                    // edge-based logic.
+                                    if block_top_content < target + top_margin {
+                                        target = (block_top_content - top_margin).max(0);
+                                    } else if effective_bottom > target + viewport_h {
+                                        let bottom_target = (effective_bottom - viewport_h).max(0);
+                                        if bottom_target < max_offset || target >= max_offset {
+                                            target = bottom_target.min(max_offset);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // No cursor row info — fall back to block-edge logic.
+                                if block_top_content < target + top_margin {
+                                    target = (block_top_content - top_margin).max(0);
+                                } else if effective_bottom > target + viewport_h {
+                                    let bottom_target = (effective_bottom - viewport_h).max(0);
+                                    if bottom_target < max_offset || target >= max_offset {
+                                        target = bottom_target.min(max_offset);
+                                    }
                                 }
                             }
                             scroll_ref.write().scroll_to(target);
@@ -609,6 +618,8 @@ pub fn BlocksRenderer(
                                                             scroll_handle: props.scroll_handle.clone(),
                                                             cursor_moved,
                                                             child: Some(factory),
+                                                            cursor_row: cursor_line_idx.map(|r| r as i32),
+                                                            bottom_offset: Some(0),
                                                         )
                                                     }.into_any()
                                                 } else {
@@ -730,21 +741,9 @@ pub fn BlocksRenderer(
                         let after_str = after.to_string();
                         let cursor_row_col_clone = cursor_row_col.clone();
 
-
-                        let prefix = format!(
-                            "↳ Ln {}, Col {}: ",
-                            cursor_row_col_clone.map(|(r, _)| r + 1).unwrap_or(1),
-                            cursor_row_col_clone.map(|(_, c)| c).unwrap_or(0),
-                        );
+                        let info_row = cursor_row_col_clone.map(|(r, _)| r).unwrap_or(0);
+                        let info_col = cursor_row_col_clone.map(|(_, c)| c).unwrap_or(0);
                         let total = vw_clone.unwrap_or(80).saturating_sub(theme::TOTAL_VIEWPORT_OFFSET + 12) as usize;
-                        let budget  = total
-                            .saturating_sub(UnicodeWidthStr::width(prefix.as_str()))
-                            .saturating_sub(1)
-                            .max(8);
-                        let before_keep = budget / 2;
-                        let after_keep = budget - before_keep;
-                        let before_win = tail_to_width(&before_str, before_keep);
-                        let after_win = head_to_width(&after_str, after_keep);
 
                         let so = scroll_offset as i32;
                         let factory: Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static> = Arc::new(move || {
@@ -774,15 +773,18 @@ pub fn BlocksRenderer(
                                         padding_left: 4,
                                         padding_right: 2,
                                         margin_bottom: 1,
-                                        flex_direction: FlexDirection::Row,
                                         background_color: theme::DARK_BG,
                                     ) {
-                                        Text(content: prefix.clone(), color: theme::YELLOW, weight: Weight::Bold)
-                                        Text(content: before_win.clone(), color: theme::FG)
-                                        View(background_color: theme::BLUE) {
-                                            Text(content: cursor_char_str.clone(), color: theme::DARK_BG)
-                                        }
-                                        Text(content: after_win.clone(), color: theme::FG)
+                                        CursorInfo(
+                                            row: info_row,
+                                            col: info_col,
+                                            before: before_str.clone(),
+                                            cursor_char: cursor_char_str.clone(),
+                                            after: after_str.clone(),
+                                            show_arrow: Some(true),
+                                            cursor_bg: Some(theme::BLUE),
+                                            budget: Some(total),
+                                        )
                                     }
                                 }
                             }.into_any()
@@ -793,6 +795,8 @@ pub fn BlocksRenderer(
                                 scroll_handle: props.scroll_handle.clone(),
                                 cursor_moved,
                                 child: Some(factory),
+                                cursor_row: cursor_line_idx.map(|r| r as i32),
+                                bottom_offset: Some(2),
                             )
                         }.into_any()
                     } else {
