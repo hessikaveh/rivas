@@ -126,11 +126,6 @@ impl ScrollPosition {
         self.baseline - scroll_offset
     }
 
-    /// Returns the current baseline value.
-    pub fn baseline(&self) -> i32 {
-        self.baseline
-    }
-
     /// Returns the scroll offset captured at the time the baseline was recorded.
     pub fn captured_scroll_offset(&self) -> i32 {
         self.baseline_scroll
@@ -163,10 +158,6 @@ impl Viewport {
 
     pub fn width(&self) -> u32 {
         self.width.unwrap_or(80)
-    }
-
-    pub fn scroll_offset(&self) -> i32 {
-        self.scroll_offset.unwrap_or(0)
     }
 }
 ///
@@ -290,15 +281,6 @@ mod tests {
     }
 
     #[test]
-    fn scroll_position_baseline_is_set_on_rect_move() {
-        let mut sp = ScrollPosition::new();
-        sp.update(10, 5);
-        assert_eq!(sp.baseline(), 15);
-        assert_eq!(sp.y(5), 10);
-        assert_eq!(sp.captured_scroll_offset(), 5);
-    }
-
-    #[test]
     fn scroll_position_y_correct_when_scroll_changes_rect_stale() {
         let mut sp = ScrollPosition::new();
         sp.update(10, 5);
@@ -310,7 +292,6 @@ mod tests {
         let mut sp = ScrollPosition::new();
         sp.update(10, 5);
         sp.update(20, 15);
-        assert_eq!(sp.baseline(), 35);
         assert_eq!(sp.y(15), 20);
     }
 

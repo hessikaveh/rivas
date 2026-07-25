@@ -1,4 +1,3 @@
-use base64::Engine;
 use std::{
     io::Write,
     sync::atomic::{AtomicU32, Ordering},
@@ -53,61 +52,6 @@ fn chunked_write<W: Write>(w: &mut W, first_control: &str, rest_control: &str, d
 
 // --- raw-data API (base64-encode internally on every call) ---
 
-pub fn write_to_cropped<W: Write>(
-    w: &mut W,
-    id: u32,
-    png_data: &[u8],
-    cols: u32,
-    rows: u32,
-    src_x: u32,
-    src_y: u32,
-    src_w: u32,
-    src_h: u32,
-) {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(png_data);
-    let crop = crop_string(src_x, src_y, src_w, src_h);
-    chunked_write(
-        w,
-        &format!("a=T,f=100,t=d,i={},c={},r={}{}", id, cols, rows, crop),
-        "",
-        &encoded,
-    );
-}
-
-pub fn write_animation_frames<W: Write>(w: &mut W, id: u32, frames: &[(Vec<u8>, u32)]) {
-    for (png_data, delay_ms) in frames {
-        let encoded = base64::engine::general_purpose::STANDARD.encode(png_data);
-        chunked_write(
-            w,
-            &format!("a=f,f=100,i={},z={}", id, delay_ms),
-            "a=f",
-            &encoded,
-        );
-    }
-}
-
-// --- pre-encoded API (for cached base64 data) ---
-
-pub fn write_to_cropped_encoded<W: Write>(
-    w: &mut W,
-    id: u32,
-    encoded: &str,
-    cols: u32,
-    rows: u32,
-    src_x: u32,
-    src_y: u32,
-    src_w: u32,
-    src_h: u32,
-) {
-    let crop = crop_string(src_x, src_y, src_w, src_h);
-    chunked_write(
-        w,
-        &format!("a=T,f=100,t=d,i={},c={},r={}{}", id, cols, rows, crop),
-        "",
-        encoded,
-    );
-}
-
 /// Transmit image data into the terminal's graphic store without creating a
 /// visual placement.  Uses `a=t` (transmit-only) so no image appears at the
 /// cursor — the caller can later use `a=p` to place the cached data.
@@ -159,11 +103,6 @@ pub fn delete_image<W: Write>(w: &mut W, id: u32) {
     write!(w, "\x1b_Ga=d,d=I,i={},q=2;\x1b\\", id).unwrap();
 }
 
-/// Alias for delete_image — used by ImageGuard for cleanup on drop.
-pub fn delete_by_id<W: Write>(w: &mut W, id: u32) {
-    delete_image(w, id);
-}
-
 pub fn delete_all<W: Write>(w: &mut W) {
     write!(w, "\x1b_Ga=d,d=a,q=2;\x1b\\").unwrap();
 }
@@ -188,48 +127,4 @@ pub fn place_image<W: Write>(
         id, cols, rows, crop
     )
     .unwrap();
-}
-
-// --- ImageGuard ---
-
-pub struct ImageGuard {
-    id: u32,
-}
-
-impl ImageGuard {
-    pub fn new() -> Self {
-        Self { id: 0 }
-    }
-
-    pub fn set_id(&mut self, id: u32) {
-        self.id = id;
-    }
-
-    pub fn set(&mut self, id: u32) {
-        if self.id != 0 && self.id != id {
-            let mut stdout = std::io::stdout().lock();
-            delete_by_id(&mut stdout, self.id);
-            let _ = stdout.flush();
-        }
-        self.id = id;
-    }
-
-    pub fn id(&self) -> u32 {
-        self.id
-    }
-
-    pub fn clear(&mut self) {
-        if self.id != 0 {
-            let mut stdout = std::io::stdout().lock();
-            delete_by_id(&mut stdout, self.id);
-            let _ = stdout.flush();
-            self.id = 0;
-        }
-    }
-}
-
-impl Drop for ImageGuard {
-    fn drop(&mut self) {
-        self.clear();
-    }
 }

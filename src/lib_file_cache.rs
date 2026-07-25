@@ -39,12 +39,6 @@ impl FileListCache {
             timestamp: current_time_secs(),
         });
     }
-
-    /// Clear cache (useful for forcing refresh)
-    pub fn clear(&self) {
-        let mut cache = self.cached_files.lock().unwrap();
-        *cache = None;
-    }
 }
 
 impl Clone for FileListCache {

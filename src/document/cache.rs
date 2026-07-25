@@ -47,11 +47,6 @@ impl ParseCache {
             }
         }
     }
-
-    /// Clear cache (useful for testing or memory pressure)
-    pub fn clear(&self) {
-        self.cache.lock().unwrap().clear();
-    }
 }
 
 impl Clone for ParseCache {

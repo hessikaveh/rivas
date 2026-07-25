@@ -70,20 +70,6 @@ pub enum MathRender {
     },
 }
 
-/// Render LaTeX as a Unicode text string (matrices become box-art text).
-/// Convenience wrapper around [`render_math_unicode_ast`] for callers that
-/// only need a string.
-pub fn render_math_unicode(latex: &str) -> String {
-    match render_math_unicode_ast(latex) {
-        MathRender::Text(s) => s,
-        MathRender::Matrix {
-            rows,
-            col_widths,
-            kind,
-        } => matrix_to_string(&rows, &col_widths, kind),
-    }
-}
-
 /// Render LaTeX as a [`MathRender`], preserving matrices as structured grid
 /// data so the UI can lay them out with aligned borders.
 pub fn render_math_unicode_ast(latex: &str) -> MathRender {
@@ -1078,61 +1064,6 @@ mod tests {
 
         assert_png(&png, width, height);
         assert!(width <= 40);
-    }
-
-    #[test]
-    fn unicode_math_converts_common_symbols() {
-        assert_eq!(render_math_unicode(r"\alpha"), "α");
-        assert_eq!(render_math_unicode(r"x^2"), "x²");
-        assert_eq!(render_math_unicode(r"\infty"), "∞");
-        assert!(render_math_unicode(r"\frac{1}{2}").contains('/'));
-    }
-
-    #[test]
-    fn unicode_fraction_is_recursive_and_balanced() {
-        // \sqrt inside \frac must be recursed and braces balanced
-        let out = render_math_unicode(r"x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}");
-        assert!(out.ends_with("/2a"), "got: {out:?}");
-        assert!(out.contains('√'), "got: {out:?}");
-        assert!(!out.contains("\\frac"), "frac not rewritten: {out:?}");
-        assert!(!out.contains('}'), "stray brace in output: {out:?}");
-    }
-
-    #[test]
-    fn unicode_matrix_renders_as_box_art() {
-        let out = render_math_unicode(
-            r"\begin{bmatrix} 1 & 0 & 0 \\ 0 & 34 & 0 \\ 0 & 0 & x^2 \end{bmatrix}",
-        );
-        assert!(out.contains('⎡'), "expected top bracket, got: {out:?}");
-        assert!(out.contains('⎦'), "expected bottom bracket, got: {out:?}");
-        // three rows, each on its own line
-        let lines: Vec<&str> = out.split('\n').collect();
-        assert_eq!(lines.len(), 3, "expected 3 rows, got: {out:?}");
-        assert!(out.contains("x²"));
-    }
-
-    #[test]
-    fn unicode_pmatrix_uses_parens() {
-        let out = render_math_unicode(r"\begin{pmatrix} a & b \\ c & d \end{pmatrix}");
-        assert!(out.contains('⎛'));
-        assert!(out.contains('⎠'));
-    }
-
-    #[test]
-    fn unicode_integral_drops_extra_caret() {
-        let out = render_math_unicode(r"\int_0^\infty e^{-x} \, dx = 1");
-        assert!(!out.contains('^'), "stray caret in: {out:?}");
-        assert!(out.contains("∫₀∞"), "got: {out:?}");
-        assert!(out.contains("e⁻ˣ"), "got: {out:?}");
-    }
-
-    #[test]
-    fn unicode_script_groups_convert() {
-        assert_eq!(render_math_unicode(r"x^{n+1}"), "xⁿ⁺¹");
-        assert_eq!(render_math_unicode(r"a_n"), "aₙ");
-        // A letter with no sub/superscript variant keeps a caret so it is not
-        // misread as a product.
-        assert_eq!(render_math_unicode(r"\omega_{\beta_0}"), "ω_β₀");
     }
 }
 

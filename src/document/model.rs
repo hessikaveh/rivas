@@ -4,7 +4,6 @@ pub enum Block {
     Heading {
         level: u8,
         content: Vec<Inline>,
-        id: String,
         span: (usize, usize),
     },
     Paragraph {
@@ -101,15 +100,8 @@ pub enum Inline {
     Strikethrough(Vec<Inline>),
     Code(String),
     Math(String),
-    Link {
-        text: Vec<Inline>,
-        url: String,
-        title: Option<String>,
-    },
-    Image {
-        alt: String,
-        url: String,
-    },
+    Link { text: Vec<Inline>, url: String },
+    Image { alt: String, url: String },
     SoftBreak,
     HardBreak,
 }
