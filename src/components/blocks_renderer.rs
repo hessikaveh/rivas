@@ -10,61 +10,17 @@ use crate::components::mermaid_block::MermaidBlock;
 use crate::components::paragraph::Paragraph;
 use crate::components::quote_block::QuoteBlock;
 use crate::components::scroll::{
-    Viewport, compute_scroll_into_view_target, visible_range_with_cursor,
+    Viewport, compute_scroll_into_view_target, estimate_block_height, visible_range_with_cursor,
 };
 use crate::components::table_block::TableBlock;
 use crate::components::thematic_break::ThematicBreak;
 use crate::debug;
-use crate::document::model::{Block, inlines_to_text};
+use crate::document::model::Block;
 use crate::output::graphics_manager::IMAGE_HEIGHT_CACHE;
 use crate::theme;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-// Estimate the height of a block in terminal rows
-pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u32 {
-    let wrap_width = vw.unwrap_or(80) as usize;
-    match block {
-        Block::Heading { .. } => 2,
-        Block::Paragraph { content, .. } => {
-            let text = inlines_to_text(content);
-            let chars = text.chars().count();
-            ((chars as f32 / wrap_width as f32).ceil() as u32).max(1)
-        }
-        Block::Code { code, .. } => code.lines().count() as u32 + 2,
-        Block::Math { display, .. } => {
-            let cache_key = format!("math:{}:{}:{}", vw.unwrap_or(100), display, content);
-            IMAGE_HEIGHT_CACHE
-                .get(&cache_key)
-                .map(|(_, h)| h)
-                .unwrap_or(if *display { 2 } else { 1 })
-        }
-        Block::Mermaid { source, .. } => {
-            let cache_key = format!("mermaid:{}:{}", vw.unwrap_or(100), source);
-            IMAGE_HEIGHT_CACHE
-                .get(&cache_key)
-                .map(|(_, h)| h)
-                .unwrap_or(10)
-        }
-        Block::Table { rows, .. } => (rows.len() + 1) as u32,
-        Block::List { items, .. } => items.len() as u32,
-        Block::Quote { children, .. } => children
-            .iter()
-            .map(|b| estimate_block_height(b, content, vw))
-            .sum::<u32>()
-            .max(1),
-        Block::ThematicBreak { .. } => 1,
-        Block::Image { url, .. } => {
-            let cache_key = format!("{}:{}", vw.unwrap_or(100), url);
-            IMAGE_HEIGHT_CACHE
-                .get(&cache_key)
-                .map(|(_, h)| h)
-                .unwrap_or(5)
-        }
-        Block::Html { content, .. } => content.lines().count() as u32,
-    }
-}
 
 #[derive(Default, Props)]
 struct ScrollIntoViewContainerProps {

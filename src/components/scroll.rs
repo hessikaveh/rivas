@@ -1,3 +1,5 @@
+use crate::document::model::{Block, inlines_to_text};
+use crate::output::graphics_manager::IMAGE_HEIGHT_CACHE;
 use iocraft::prelude::KeyCode;
 
 /// Describes a user-initiated scroll action from a key press.
@@ -164,6 +166,50 @@ impl Viewport {
 /// Given cumulative block heights, the current scroll offset, viewport
 /// height, and buffer size, returns `(first_visible, last_visible)`.
 /// Off-screen blocks are replaced with spacer Views of the same estimated
+/// Estimate the height of a block in terminal rows.
+pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u32 {
+    let wrap_width = vw.unwrap_or(80) as usize;
+    match block {
+        Block::Heading { .. } => 2,
+        Block::Paragraph { content, .. } => {
+            let text = inlines_to_text(content);
+            let chars = text.chars().count();
+            ((chars as f32 / wrap_width as f32).ceil() as u32).max(1)
+        }
+        Block::Code { code, .. } => code.lines().count() as u32 + 2,
+        Block::Math { display, .. } => {
+            let cache_key = format!("math:{}:{}:{}", vw.unwrap_or(100), display, content);
+            IMAGE_HEIGHT_CACHE
+                .get(&cache_key)
+                .map(|(_, h)| h)
+                .unwrap_or(if *display { 2 } else { 1 })
+        }
+        Block::Mermaid { source, .. } => {
+            let cache_key = format!("mermaid:{}:{}", vw.unwrap_or(100), source);
+            IMAGE_HEIGHT_CACHE
+                .get(&cache_key)
+                .map(|(_, h)| h)
+                .unwrap_or(10)
+        }
+        Block::Table { rows, .. } => (rows.len() + 1) as u32,
+        Block::List { items, .. } => items.len() as u32,
+        Block::Quote { children, .. } => children
+            .iter()
+            .map(|b| estimate_block_height(b, content, vw))
+            .sum::<u32>()
+            .max(1),
+        Block::ThematicBreak { .. } => 1,
+        Block::Image { url, .. } => {
+            let cache_key = format!("{}:{}", vw.unwrap_or(100), url);
+            IMAGE_HEIGHT_CACHE
+                .get(&cache_key)
+                .map(|(_, h)| h)
+                .unwrap_or(5)
+        }
+        Block::Html { content, .. } => content.lines().count() as u32,
+    }
+}
+
 /// height so that ScrollView's measured `content_height` stays accurate.
 pub fn compute_visible_range(
     scroll_offset: u32,
