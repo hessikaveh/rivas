@@ -114,20 +114,12 @@ fn parse_inlines_until(
                 *pos += 1;
                 inlines.push(Inline::Strikethrough(parse_inlines(events, pos, None)));
             }
-            Event::Start(Tag::Link {
-                dest_url, title, ..
-            }) => {
+            Event::Start(Tag::Link { dest_url, .. }) => {
                 let url = dest_url.to_string();
-                let title = if title.is_empty() {
-                    None
-                } else {
-                    Some(title.to_string())
-                };
                 *pos += 1;
                 inlines.push(Inline::Link {
                     text: parse_inlines(events, pos, None),
                     url,
-                    title,
                 });
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
@@ -242,16 +234,11 @@ fn parse_block_tag(
     start_offset: usize,
 ) -> Option<Block> {
     match tag {
-        Tag::Heading { level, id, .. } => {
+        Tag::Heading { level, .. } => {
             let (inlines, end_offset) = parse_inlines_with_end(events, pos, None);
-            let id_str = id
-                .as_ref()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| slugify(&inlines));
             Some(Block::Heading {
                 level: heading_to_u8(*level),
                 content: inlines,
-                id: id_str,
                 span: (start_offset, end_offset),
             })
         }
@@ -314,21 +301,13 @@ fn parse_block_tag(
                 span: (start_offset, end_offset),
             })
         }
-        Tag::Link {
-            dest_url, title, ..
-        } => {
+        Tag::Link { dest_url, .. } => {
             let url = dest_url.to_string();
-            let title = if title.is_empty() {
-                None
-            } else {
-                Some(title.to_string())
-            };
             let (children, end_offset) = parse_inlines_with_end(events, pos, None);
             Some(Block::Paragraph {
                 content: vec![Inline::Link {
                     text: children,
                     url,
-                    title,
                 }],
                 span: (start_offset, end_offset),
             })
@@ -502,16 +481,6 @@ fn heading_to_u8(level: HeadingLevel) -> u8 {
         HeadingLevel::H5 => 5,
         HeadingLevel::H6 => 6,
     }
-}
-
-fn slugify(inlines: &[Inline]) -> String {
-    inlines_to_text(inlines)
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
 }
 
 fn parse_inlines_with_end(

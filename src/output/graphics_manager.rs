@@ -110,9 +110,9 @@ lazy_static::lazy_static! {
 enum EntryStatus {
     Loading,
     Ready(
-        Arc<String>,
-        Vec<(Arc<String>, u32)>,
-        bool, /* has_animation */
+        #[allow(dead_code)] Arc<String>,
+        #[allow(dead_code)] Vec<(Arc<String>, u32)>,
+        #[allow(dead_code)] bool, /* has_animation */
     ),
     Error(String),
 }
@@ -669,17 +669,6 @@ impl Drop for ReleaseGuard {
     }
 }
 
-/// Return the Kitty protocol placement ID for a given graphics key, if known.
-/// Uses try_lock to avoid blocking the render thread if the background
-/// graphics thread is holding the registry lock during image loading.
-pub fn kitty_id(key: &str) -> Option<u32> {
-    graphics()
-        .registry
-        .try_lock()
-        .ok()
-        .and_then(|r| r.get(key).map(|e| e.kitty_id))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -744,10 +733,5 @@ mod tests {
             !key.contains('#'),
             "Image height cache key should not contain instance_id"
         );
-    }
-
-    #[test]
-    fn kitty_id_returns_none_for_unknown_key() {
-        assert_eq!(kitty_id("nonexistent"), None);
     }
 }

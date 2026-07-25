@@ -1,4 +1,5 @@
 use crate::components::blocks_renderer::BlocksRenderer;
+use crate::components::scroll::Viewport;
 use crate::document::model::ListItem;
 use crate::theme;
 use iocraft::prelude::*;
@@ -10,8 +11,7 @@ pub struct ListBlockProps {
     pub start: Option<u64>,
     pub items: Vec<ListItem>,
     pub file_path: PathBuf,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
@@ -37,11 +37,10 @@ pub fn ListBlock(props: &ListBlockProps, _hooks: Hooks) -> impl Into<AnyElement<
                             Text(content: format!("{} ", marker), color: theme::YELLOW)
                         }
                         View(flex_grow: 1.0) {
-                            BlocksRenderer(
+                        BlocksRenderer(
                                 blocks: item.content.clone(),
                                 file_path: props.file_path.clone(),
-                                viewport_height: props.viewport_height,
-                                viewport_width: props.viewport_width,
+                                viewport: props.viewport.clone(),
                             )
                         }
                     }

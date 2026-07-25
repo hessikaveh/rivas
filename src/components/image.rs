@@ -1,3 +1,4 @@
+use crate::components::scroll::{ScrollPosition, Viewport};
 use crate::debug;
 use crate::output::capabilities;
 use crate::output::graphics_manager::{
@@ -24,12 +25,7 @@ pub struct ImageProps {
     pub file_path: PathBuf,
     pub title: Option<String>,
     pub alt: Option<String>,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    /// Current scroll offset in rows, from the owning ScrollView. When it
-    /// changes we re-run placement so a post-scroll frame with a stale canvas
-    /// rect does not leave the image detached at the wrong place.
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
@@ -44,7 +40,7 @@ pub fn Image(props: &ImageProps, _hooks: Hooks) -> impl Into<AnyElement<'static>
             }))
             #(if capabilities::has_kitty() {
                 Some(element! {
-                    KittyImage(url: props.url.clone(), file_path: props.file_path.clone(), viewport_height: props.viewport_height, viewport_width: props.viewport_width, scroll_offset: props.scroll_offset)
+                    KittyImage(url: props.url.clone(), file_path: props.file_path.clone(), viewport: props.viewport.clone())
                 }.into_any())
             } else {
                 Some(element! {
@@ -59,15 +55,17 @@ pub fn Image(props: &ImageProps, _hooks: Hooks) -> impl Into<AnyElement<'static>
 pub struct KittyImageProps {
     pub url: String,
     pub file_path: PathBuf,
-    pub viewport_height: Option<u32>,
-    pub viewport_width: Option<u32>,
-    pub scroll_offset: Option<i32>,
+    pub viewport: Option<Viewport>,
 }
 
 #[component]
 pub fn KittyImage(props: &KittyImageProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    let vw = props.viewport_width.unwrap_or(100);
-    let vh = props.viewport_height.unwrap_or(100);
+    let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);
+    let vh = props
+        .viewport
+        .as_ref()
+        .and_then(|v| v.height)
+        .unwrap_or(100);
     // Unique per-occurrence key so identical images don't share a terminal
     // graphic id (which would let one occurrence's detach/place clobber others).
     let instance = hooks.use_ref(|| next_instance_id());
@@ -94,17 +92,9 @@ pub fn KittyImage(props: &KittyImageProps, mut hooks: Hooks) -> impl Into<AnyEle
     let mut error_msg = hooks.use_state(|| None::<String>);
     let mut sized = hooks.use_state(|| false);
     let mut acquired_key = hooks.use_ref(|| String::new());
-    let mut cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
+    let cur_key = hooks.use_ref(|| Arc::new(Mutex::new(String::new())));
     let caps_cache = hooks.use_ref(|| crate::output::capabilities::TermCaps::detect().ok());
-    // Real-layout invariant: `baseline = rect.top + scroll_offset` is constant
-    // across scrolls (the scrollable layout is just translated by the scroll
-    // offset). We capture `baseline` whenever the real canvas rect moves, then
-    // derive `y = baseline - scroll_offset` for any scroll — which is correct
-    // even on the frame where `use_component_rect()` still reports the
-    // pre-scroll position (its `top` lags the scroll).
-    let mut baseline = hooks.use_ref(|| 0i32);
-    let mut baseline_scroll = hooks.use_ref(|| 0i32);
-    let mut last_rect_y = hooks.use_ref(|| i32::MIN);
+    let mut scroll_pos = ScrollPosition::new();
 
     let url = &props.url;
     let base_dir = props.file_path.parent();
@@ -160,19 +150,14 @@ pub fn KittyImage(props: &KittyImageProps, mut hooks: Hooks) -> impl Into<AnyEle
     if let Some(r) = rect {
         let x = r.left;
         let y_raw = r.top;
-        // Derive the correct vertical position from the scroll-invariant
-        // baseline. `baseline = y_raw + scroll_offset` is constant for the real
-        // layout, so recompute it only when the canvas rect actually moves
-        // (i.e. a fresh layout). On a stale-rect frame `y_raw` is unchanged, so
-        // we keep the last good `baseline` and apply the current scroll. This
-        // makes `y` correct even when `use_component_rect()` lags the scroll.
-        let so = props.scroll_offset.unwrap_or(*baseline_scroll.read());
-        if y_raw != *last_rect_y.read() {
-            *baseline.write() = y_raw + so;
-            *baseline_scroll.write() = so;
-            *last_rect_y.write() = y_raw;
-        }
-        let y = *baseline.read() - so;
+        let so = props
+            .viewport
+            .as_ref()
+            .and_then(|v| v.scroll_offset)
+            .or(Some(scroll_pos.captured_scroll_offset()))
+            .unwrap();
+        scroll_pos.update(y_raw, so);
+        let y = scroll_pos.y(so);
 
         let pos = (x, y);
         if pos != drawn_at.get() {

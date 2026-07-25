@@ -12,5 +12,6 @@ pub mod math_block;
 pub mod mermaid_block;
 pub mod paragraph;
 pub mod quote_block;
+pub mod scroll;
 pub mod table_block;
 pub mod thematic_break;

@@ -19,48 +19,28 @@ pub fn force_kitty() {
 
 #[derive(Clone, Debug)]
 pub struct TermCaps {
-    pub cols: u16,
-    pub rows: u16,
     pub cell_w_px: u16,
     pub cell_h_px: u16,
-    pub has_kitty: bool,
 }
 
 impl Default for TermCaps {
     fn default() -> Self {
         Self {
-            cols: 80,
-            rows: 24,
             cell_w_px: 8,
             cell_h_px: 16,
-            has_kitty: true,
         }
     }
 }
 
 impl TermCaps {
     pub fn detect() -> Result<Self> {
-        let (cols, rows) = crossterm::terminal::size()?;
         let (cell_w_px, cell_h_px) = cell_pixel_size().unwrap_or((8, 16));
         let kitty = detect_kitty();
         HAS_KITTY.store(kitty, Ordering::Relaxed);
         Ok(Self {
-            cols,
-            rows,
             cell_w_px,
             cell_h_px,
-            has_kitty: kitty,
         })
-    }
-
-    /// returns how many terminal rows an images of height_px occupy.
-    pub fn image_rows(&self, height_px: u32) -> u16 {
-        ((height_px as f32 / self.cell_h_px as f32).ceil() as u16).max(1)
-    }
-
-    /// Pixel area of the content.
-    pub fn content_width_px(&self) -> u32 {
-        self.cols as u32 * self.cell_w_px as u32
     }
 }
 
