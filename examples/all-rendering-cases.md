@@ -13,6 +13,10 @@ This paragraph contains **strong text**, *emphasis*, ~~strikethrough~~,
 `inline code`, a [link to the Rust website](https://www.rust-lang.org/), and
 inline math $E = mc^2$.
 
+
+This paragraph has some multibyte unicode chars ⼽◉𓁛
+
+
 Hard break after this line.  
 This line should appear below it.
 

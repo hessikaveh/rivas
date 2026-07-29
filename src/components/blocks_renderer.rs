@@ -22,6 +22,7 @@ use crate::theme;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 use std::sync::Arc;
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Default, Props)]
 struct ScrollIntoViewContainerProps {
@@ -374,7 +375,16 @@ pub fn BlocksRenderer(
                                         let mut segments = Vec::new();
                                         let mut remaining: &str = line;
                                         while !remaining.is_empty() {
-                                            let mut split_at = remaining.char_indices().nth(wrap_width).map(|(i, _)| i).unwrap_or(remaining.len());
+                                            let mut col_width = 0usize;
+                                            let mut split_at = remaining.len();
+                                            for (byte_idx, ch) in remaining.char_indices() {
+                                                let w = ch.width().unwrap_or(0);
+                                                if col_width + w > wrap_width {
+                                                    split_at = byte_idx;
+                                                    break;
+                                                }
+                                                col_width += w;
+                                            }
 
                                             if split_at < remaining.len() {
                                                 if let Some(last_space) = remaining[..split_at].rfind(' ') {

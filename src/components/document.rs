@@ -57,14 +57,13 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
     let cursor_line_preview = state_guard.as_ref().and_then(|s| {
         let (row, col) = (s.row, s.col);
         let line = s.buf.line(row);
-        let before = &line[..col.min(line.len())];
-        let (cursor_ch, after) = if col < line.len() {
-            let c = line[col..].chars().next()?;
+        let byte = s.buf.byte_offset(row, col);
+        let before = &line[..byte.min(line.len())];
+        let (cursor_ch, after) = if col < s.buf.char_count(row) {
+            let c = line[byte..].chars().next()?;
             let char_len = c.len_utf8();
-            (
-                c.to_string(),
-                line[(col + char_len).min(line.len())..].to_string(),
-            )
+            let after_byte = (byte + char_len).min(line.len());
+            (c.to_string(), line[after_byte..].to_string())
         } else {
             (" ".to_string(), String::new())
         };
