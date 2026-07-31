@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// File list cache with TTL (Time-To-Live)
+/// Thread-safe file list cache with time-to-live (TTL) expiration.
+///
+/// Stores a list of file paths with a timestamp, returning `None` when the
+/// cache has expired. Useful for avoiding repeated filesystem scans.
 pub struct FileListCache {
     cached_files: Arc<Mutex<Option<CachedFileList>>>,
 }
@@ -12,6 +15,7 @@ struct CachedFileList {
 }
 
 impl FileListCache {
+    /// Creates an empty file list cache.
     pub fn new() -> Self {
         FileListCache {
             cached_files: Arc::new(Mutex::new(None)),

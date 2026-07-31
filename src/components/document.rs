@@ -13,21 +13,37 @@ use crate::document::cache::ParseCache;
 use crate::document::parser::parse_markdown;
 use crate::theme;
 
+/// Properties for the [`Document`] component.
 #[derive(Default, Props)]
 pub struct DocumentProps {
+    /// The Markdown source text to render.
     pub content: String,
+    /// File path for resolving relative image/link URLs.
     pub file_path: PathBuf,
+    /// Height of the visible viewport in lines (for scrolling).
     pub viewport_height: Option<u32>,
+    /// Width of the visible viewport in columns (for line wrapping).
     pub viewport_width: Option<u32>,
+    /// `true` to enable keyboard navigation (scrolling, editing).
     pub keyboard_navigation: Option<bool>,
+    /// Reference to scroll a specific element into view (e.g., a link target).
     pub follow_ref: Option<Ref<usize>>,
+    /// Reference to the cursor byte offset for editor cursor rendering.
     pub cursor_offset: Option<Ref<usize>>,
+    /// `true` to enable debug overlay rendering.
     pub debug: bool,
+    /// `true` to render inline debug annotations.
     pub debug_annotations: bool,
+    /// Callback fired when the buffer content changes (for auto-save, etc.).
     pub on_change: Handler<String>,
+    /// Callback fired when the user requests quit (`:q`, `ZZ`, Ctrl-C).
     pub on_quit: Handler<()>,
 }
 
+/// Top-level document component combining the editor, block renderer, and status bar.
+///
+/// Manages the editor state, handles keyboard input, scroll navigation, and
+/// renders the parsed Markdown with an optional cursor overlay in edit mode.
 #[component]
 pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let content_prop = props.content.clone();
@@ -57,14 +73,13 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
     let cursor_line_preview = state_guard.as_ref().and_then(|s| {
         let (row, col) = (s.row, s.col);
         let line = s.buf.line(row);
-        let before = &line[..col.min(line.len())];
-        let (cursor_ch, after) = if col < line.len() {
-            let c = line[col..].chars().next()?;
+        let byte = s.buf.byte_offset(row, col);
+        let before = &line[..byte.min(line.len())];
+        let (cursor_ch, after) = if col < s.buf.char_count(row) {
+            let c = line[byte..].chars().next()?;
             let char_len = c.len_utf8();
-            (
-                c.to_string(),
-                line[(col + char_len).min(line.len())..].to_string(),
-            )
+            let after_byte = (byte + char_len).min(line.len());
+            (c.to_string(), line[after_byte..].to_string())
         } else {
             (" ".to_string(), String::new())
         };

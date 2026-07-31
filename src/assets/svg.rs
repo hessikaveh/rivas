@@ -15,6 +15,10 @@ fn svg_opts() -> &'static usvg::Options<'static> {
     })
 }
 
+/// Rasterizes an SVG string to a PNG byte buffer.
+///
+/// Scales the SVG to fit within `max_width` pixels (preserving aspect ratio),
+/// capping at the original size. Returns `(png_bytes, width, height)`.
 pub fn rasterize_svg_to_png(svg: &str, max_width: u32) -> Result<(Vec<u8>, u32, u32)> {
     let opt = svg_opts();
     let tree = usvg::Tree::from_str(svg, opt)?;

@@ -19,15 +19,23 @@ fn next_instance_id() -> u64 {
     INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Properties for the [`Image`] component.
 #[derive(Default, Props)]
 pub struct ImageProps {
+    /// URL or file path of the image.
     pub url: String,
+    /// Base directory for resolving relative image paths.
     pub file_path: PathBuf,
+    /// Optional title displayed above the image.
     pub title: Option<String>,
+    /// Alt text used as fallback label when the image cannot be displayed.
     pub alt: Option<String>,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders an inline image, using Kitty graphics protocol if available,
+/// or a text fallback (`[Image: alt]`) otherwise.
 #[component]
 pub fn Image(props: &ImageProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let label = props.alt.as_deref().unwrap_or(&props.url);
@@ -51,13 +59,21 @@ pub fn Image(props: &ImageProps, _hooks: Hooks) -> impl Into<AnyElement<'static>
     }
 }
 
+/// Properties for the [`KittyImage`] component.
 #[derive(Default, Props)]
 pub struct KittyImageProps {
+    /// URL or file path of the image to display via Kitty graphics protocol.
     pub url: String,
+    /// Base directory for resolving relative image paths.
     pub file_path: PathBuf,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Displays an image using the Kitty terminal graphics protocol.
+///
+/// Loads the image, calculates display dimensions, and places it in the terminal.
+/// Handles scroll-into-view behavior and dynamic height estimation for layout.
 #[component]
 pub fn KittyImage(props: &KittyImageProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);

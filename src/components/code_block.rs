@@ -8,12 +8,19 @@ use syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet};
 static SS: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_nonewlines);
 static TS: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
+/// Properties for the [`CodeBlock`] component.
 #[derive(Default, Props)]
 pub struct CodeBlockProps {
+    /// Programming language for syntax highlighting (e.g., `"rust"`, `"python"`).
     pub language: Option<String>,
+    /// The source code content to render.
     pub code: String,
 }
 
+/// Renders a syntax-highlighted fenced code block.
+///
+/// Uses `syntect` for highlighting with the base16-ocean-dark theme.
+/// The language label is displayed in the top-right corner.
 #[component]
 pub fn CodeBlock(props: &CodeBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let lang_label = props.language.clone().unwrap_or_else(|| "code".to_string());

@@ -69,15 +69,21 @@ pub struct ImageHeightCache {
 }
 
 impl ImageHeightCache {
+    /// Creates an empty height cache.
     pub fn new() -> Self {
         Self {
             heights: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
         }
     }
+    /// Retrieves the cached `(cols, rows)` dimensions for a graphic key.
     pub fn get(&self, key: &str) -> Option<(u32, u32)> {
         self.heights.lock().ok().and_then(|m| m.get(key).copied())
     }
+    /// Stores the display dimensions for a graphic key.
+    ///
+    /// Increments the generation counter if the value actually changed,
+    /// signaling to components that a re-render may be needed.
     pub fn set(&self, key: &str, cols: u32, rows: u32) {
         let changed = {
             let mut m = self.heights.lock().ok();
@@ -94,6 +100,9 @@ impl ImageHeightCache {
             self.generation.fetch_add(1, Ordering::Relaxed);
         }
     }
+    /// Returns the current generation counter, which increments on each dimension change.
+    ///
+    /// Components can poll this to detect when cached dimensions need updating.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
     }
@@ -163,6 +172,10 @@ const CACHE_CAP: usize = 128;
 
 /// Single owner of all kitty graphics I/O. One thread, one channel, one registry
 /// of terminal-cached images. Components never touch stdout for images.
+/// Manages terminal graphics lifecycle: acquiring, placing, detaching, and releasing images.
+///
+/// Runs a background thread that processes commands sequentially, ensuring thread-safe
+/// access to the terminal's graphics state.
 pub struct GraphicsManager {
     tx: Sender<Cmd>,
     registry: Arc<Mutex<HashMap<String, Entry>>>,
@@ -172,6 +185,7 @@ lazy_static::lazy_static! {
     static ref MANAGER: GraphicsManager = GraphicsManager::new();
 }
 
+/// Returns the global singleton graphics manager.
 pub fn graphics() -> &'static GraphicsManager {
     &MANAGER
 }
@@ -612,26 +626,32 @@ impl GraphicsManager {
 // Public API used by components
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Requests acquisition of a graphic resource (transmits image data to the terminal).
 pub fn acquire(key: String, source: GfxSource) {
     graphics().send(Cmd::Acquire { key, source });
 }
 
+/// Places a previously acquired graphic at the specified terminal rectangle.
 pub fn place(key: String, rect: GfxRect) {
     graphics().send(Cmd::Place { key, rect });
 }
 
+/// Detaches a graphic from its current placement (hides it without freeing data).
 pub fn detach(key: String) {
     graphics().send(Cmd::Detach { key });
 }
 
+/// Releases a graphic completely (removes placement and frees terminal memory).
 pub fn release(key: String) {
     graphics().send(Cmd::Release { key });
 }
 
+/// Returns the cached display dimensions `(cols, rows)` for a graphic key.
 pub fn dims(key: &str) -> Option<(u32, u32)> {
     graphics().dims(key)
 }
 
+/// Returns the error message for a graphic key, if it failed to load.
 pub fn gfx_error(key: &str) -> Option<String> {
     graphics().error(key)
 }

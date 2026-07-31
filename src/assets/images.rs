@@ -14,6 +14,10 @@ pub use crate::assets::asset_cache::ImageData;
 
 static IMAGE_CACHE: std::sync::LazyLock<AssetCache> = std::sync::LazyLock::new(AssetCache::new);
 
+/// Resolves an image URL to an absolute file path.
+///
+/// Searches in order: the URL itself (if absolute), `base_dir`, then the current
+/// working directory. Returns an error if the file is not found.
 pub fn resolve_path(url: &str, base_dir: Option<&Path>) -> Result<PathBuf> {
     let path = PathBuf::from(url);
 
@@ -46,6 +50,11 @@ fn is_svg_ext(path: &str) -> bool {
     lower.ends_with(".svg") || lower.ends_with(".svgz")
 }
 
+/// Loads an image from a URL (local path or HTTP), returning cached or freshly-decoded data.
+///
+/// For local files, the cache key includes the file modification time for invalidation.
+/// Supports PNG, JPEG, GIF (animated, up to 60 frames), and SVG (rasterized via `resvg`).
+/// `max_width` scales the image to fit within the given pixel width.
 pub fn load_image(url: &str, base_dir: Option<&Path>, max_width: u32) -> Result<ImageData> {
     let mut hasher = DefaultHasher::new();
     url.hash(&mut hasher);

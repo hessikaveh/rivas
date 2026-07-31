@@ -20,13 +20,19 @@ fn next_instance_id() -> u64 {
     INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Properties for the [`MathBlock`] component.
 #[derive(Default, Props)]
 pub struct MathBlockProps {
+    /// LaTeX math source code.
     pub content: String,
+    /// `true` for display math (centered, larger), `false` for inline math.
     pub display: bool,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders a LaTeX math block using either Unicode text or Kitty graphics,
+/// depending on the current math mode setting.
 #[component]
 pub fn MathBlock(props: &MathBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     if math_mode() == MathMode::Image {
@@ -46,14 +52,20 @@ pub fn MathBlock(props: &MathBlockProps, _hooks: Hooks) -> impl Into<AnyElement<
 
 /// Image-free math renderer: converts LaTeX to Unicode glyphs and shows them
 /// as plain terminal text. Matrices are laid out structurally via
-/// [`MatrixMath`] so borders stay aligned. Used when `math_mode()` is
-/// `Unicode` (the default).
+/// Properties for the [`UnicodeMath`] component.
 #[derive(Default, Props)]
 pub struct UnicodeMathProps {
+    /// LaTeX math source code to render as Unicode text.
     pub content: String,
+    /// `true` for display math, `false` for inline math.
     pub display: bool,
 }
 
+/// Renders a LaTeX math expression as Unicode text in the terminal.
+///
+/// Converts LaTeX to Unicode using `unicodeit`, with brace-aware rewrites
+/// for fractions, roots, and matrix layouts. Uses [`MatrixMath`] for
+/// matrix environments to keep borders aligned.
 #[component]
 pub fn UnicodeMath(props: &UnicodeMathProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let mut cached = hooks.use_ref(|| (String::new(), MathRender::Text(String::new())));
@@ -188,13 +200,20 @@ pub fn MatrixMath(props: &MatrixMathProps, _hooks: Hooks) -> impl Into<AnyElemen
     .into_any()
 }
 
+/// Properties for the [`KittyMath`] component.
 #[derive(Default, Props)]
 pub struct KittyMathProps {
+    /// LaTeX math source code to render as an image.
     pub content: String,
+    /// `true` for display math, `false` for inline math.
     pub display: bool,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders a LaTeX math expression as a Kitty terminal graphic.
+///
+/// Uses the `mathjax` renderer to produce a PNG, then places it in the terminal.
 #[component]
 pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);

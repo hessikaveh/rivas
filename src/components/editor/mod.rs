@@ -1,451 +1,76 @@
+pub mod buffer;
+pub mod history;
+pub mod keymap;
+pub mod mode;
+
 use crate::assets::math::{self, MathMode};
-use crate::theme;
-use arboard::Clipboard;
-use iocraft::prelude::*;
-use std::collections::{HashMap, VecDeque};
-// ─────────────────────────────────────────────────────────────────────────────
-// Buffer
-// ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
-pub struct Buffer {
-    pub lines: Vec<String>,
-}
+pub use buffer::Buffer;
+pub use keymap::handle_key;
+pub use mode::{Mode, MotionType};
 
-impl Buffer {
-    pub fn new(text: &str) -> Self {
-        let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
-        if lines.is_empty() {
-            lines.push(String::new());
-        }
-        Self { lines }
-    }
-
-    pub fn to_text(&self) -> String {
-        self.lines.join("\n")
-    }
-    pub fn line_count(&self) -> usize {
-        self.lines.len()
-    }
-
-    pub fn line(&self, row: usize) -> &str {
-        &self.lines[row.min(self.lines.len().saturating_sub(1))]
-    }
-
-    pub fn char_count(&self, row: usize) -> usize {
-        self.line(row).chars().count()
-    }
-
-    pub fn clamp_col(&self, row: usize, col: usize, insert: bool) -> usize {
-        let len = self.char_count(row);
-        if insert {
-            col.min(len)
-        } else if len == 0 {
-            0
-        } else {
-            col.min(len - 1)
-        }
-    }
-
-    pub fn byte_offset(&self, row: usize, col: usize) -> usize {
-        self.line(row)
-            .char_indices()
-            .nth(col)
-            .map(|(i, _)| i)
-            .unwrap_or(self.line(row).len())
-    }
-
-    pub fn insert_char(&mut self, row: usize, col: usize, ch: char) {
-        while row >= self.lines.len() {
-            self.lines.push(String::new());
-        }
-        let byte = self.byte_offset(row, col);
-        self.lines[row].insert(byte, ch);
-    }
-
-    pub fn insert_text(&mut self, row: usize, col: usize, text: &str) -> (usize, usize) {
-        if text.is_empty() {
-            return (row, col);
-        }
-        let start_byte = self.byte_offset(row, col);
-        let line = &self.lines[row];
-        let left = line[..start_byte].to_string();
-        let right = line[start_byte..].to_string();
-
-        let parts: Vec<&str> = text.split('\n').collect();
-        if parts.len() == 1 {
-            let new_line = format!("{}{}{}", left, parts[0], right);
-            self.lines[row] = new_line;
-            let end_col = col + parts[0].chars().count();
-            (row, end_col.saturating_sub(1))
-        } else {
-            self.lines[row] = format!("{}{}", left, parts[0]);
-            let num_parts = parts.len();
-            for i in 1..(num_parts - 1) {
-                self.lines.insert(row + i, parts[i].to_string());
-            }
-            let last_line = format!("{}{}", parts[num_parts - 1], right);
-            self.lines.insert(row + num_parts - 1, last_line);
-            let end_row = row + num_parts - 1;
-            let end_col = parts[num_parts - 1].chars().count();
-            (end_row, end_col.saturating_sub(1))
-        }
-    }
-
-    pub fn delete_char(&mut self, row: usize, col: usize) -> Option<char> {
-        if col >= self.char_count(row) {
-            return None;
-        }
-        let byte = self.byte_offset(row, col);
-        Some(self.lines[row].remove(byte))
-    }
-
-    pub fn split_line(&mut self, row: usize, col: usize) {
-        let byte = self.byte_offset(row, col);
-        let rest = self.lines[row].split_off(byte);
-        self.lines.insert(row + 1, rest);
-    }
-
-    pub fn join_lines(&mut self, row: usize) {
-        if row + 1 < self.lines.len() {
-            let next = self.lines.remove(row + 1);
-            self.lines[row].push_str(&next);
-        }
-    }
-
-    pub fn delete_line(&mut self, row: usize) -> String {
-        if self.lines.len() == 1 {
-            let s = self.lines[0].clone();
-            self.lines[0].clear();
-            s
-        } else {
-            self.lines.remove(row)
-        }
-    }
-
-    pub fn insert_line(&mut self, row: usize, content: String) {
-        self.lines.insert(row, content);
-    }
-
-    pub fn replace_range_on_line(&mut self, row: usize, col_start: usize, col_end: usize, s: &str) {
-        let start = self.byte_offset(row, col_start);
-        let end = self.byte_offset(row, col_end);
-        let mut new = self.lines[row][..start].to_string();
-        new.push_str(s);
-        new.push_str(&self.lines[row][end..]);
-        self.lines[row] = new;
-    }
-
-    pub fn word_forward(&self, row: usize, col: usize) -> (usize, usize) {
-        let chars: Vec<char> = self.line(row).chars().collect();
-        if chars.is_empty() {
-            if row + 1 < self.line_count() {
-                return (row + 1, 0);
-            }
-            return (row, 0);
-        }
-
-        let mut c = col;
-        let start_class = char_class(chars[c]);
-
-        // Move past the current word (characters of the same non-whitespace class)
-        if start_class != CharClass::Whitespace {
-            while c < chars.len() && char_class(chars[c]) == start_class {
-                c += 1;
-            }
-        }
-
-        // Skip trailing whitespace
-        while c < chars.len() && char_class(chars[c]) == CharClass::Whitespace {
-            c += 1;
-        }
-
-        if c >= chars.len() {
-            if row + 1 < self.line_count() {
-                (row + 1, self.first_non_blank(row + 1))
-            } else {
-                (row, chars.len().saturating_sub(1))
-            }
-        } else {
-            (row, c)
-        }
-    }
-
-    pub fn word_backward(&self, row: usize, col: usize) -> (usize, usize) {
-        if col == 0 {
-            if row > 0 {
-                let prev_row = row - 1;
-                return (prev_row, self.char_count(prev_row).saturating_sub(1));
-            }
-            return (0, 0);
-        }
-
-        let chars: Vec<char> = self.line(row).chars().collect();
-        let mut c = col as isize - 1;
-
-        // Skip whitespace backward
-        while c >= 0 && char_class(chars[c as usize]) == CharClass::Whitespace {
-            c -= 1;
-        }
-
-        if c < 0 {
-            if row > 0 {
-                let prev_row = row - 1;
-                return (prev_row, self.char_count(prev_row).saturating_sub(1));
-            }
-            return (row, 0);
-        }
-
-        // Move to the beginning of the word (same non-whitespace class)
-        let target_class = char_class(chars[c as usize]);
-        while c > 0 && char_class(chars[(c - 1) as usize]) == target_class {
-            c -= 1;
-        }
-
-        (row, c as usize)
-    }
-
-    pub fn word_end(&self, row: usize, col: usize) -> (usize, usize) {
-        let chars: Vec<char> = self.line(row).chars().collect();
-        if chars.is_empty() {
-            if row + 1 < self.line_count() {
-                return self.word_end(row + 1, 0);
-            }
-            return (row, 0);
-        }
-
-        let mut c = col + 1;
-        // Skip whitespace to the start of the next word
-        while c < chars.len() && char_class(chars[c]) == CharClass::Whitespace {
-            c += 1;
-        }
-
-        if c >= chars.len() {
-            if row + 1 < self.line_count() {
-                return self.word_end(row + 1, 0);
-            }
-            return (row, chars.len().saturating_sub(1));
-        }
-
-        // Move to the end of this word (same non-whitespace class)
-        let target_class = char_class(chars[c]);
-        while c + 1 < chars.len() && char_class(chars[c + 1]) == target_class {
-            c += 1;
-        }
-
-        (row, c)
-    }
-
-    pub fn find_forward(
-        &self,
-        row: usize,
-        col: usize,
-        target: char,
-        before: bool,
-    ) -> Option<usize> {
-        let chars: Vec<char> = self.line(row).chars().collect();
-        for i in (col + 1)..chars.len() {
-            if chars[i] == target {
-                return Some(if before { i.saturating_sub(1) } else { i });
-            }
-        }
-        None
-    }
-
-    pub fn find_backward(
-        &self,
-        row: usize,
-        col: usize,
-        target: char,
-        before: bool,
-    ) -> Option<usize> {
-        if col == 0 {
-            return None;
-        }
-        let chars: Vec<char> = self.line(row).chars().collect();
-        for i in (0..col).rev() {
-            if chars[i] == target {
-                return Some(if before {
-                    (i + 1).min(chars.len().saturating_sub(1))
-                } else {
-                    i
-                });
-            }
-        }
-        None
-    }
-
-    pub fn first_non_blank(&self, row: usize) -> usize {
-        self.line(row)
-            .chars()
-            .take_while(|c| c.is_whitespace())
-            .count()
-    }
-
-    pub fn search_forward(
-        &self,
-        pat: &str,
-        start_row: usize,
-        start_col: usize,
-    ) -> Option<(usize, usize)> {
-        if pat.is_empty() {
-            return None;
-        }
-        let total = self.line_count();
-        for offset in 0..total {
-            let row = (start_row + offset) % total;
-            let line = self.line(row);
-            let from_byte = if offset == 0 {
-                let here = self.byte_offset(row, start_col);
-                line[here..]
-                    .char_indices()
-                    .nth(1)
-                    .map(|(i, _)| here + i)
-                    .unwrap_or(line.len())
-            } else {
-                0
-            };
-
-            if let Some(pos) = line[from_byte..].find(pat) {
-                let match_byte = from_byte + pos;
-                let col = line[..match_byte].chars().count();
-                return Some((row, col));
-            }
-        }
-        None
-    }
-
-    pub fn search_backward(
-        &self,
-        pat: &str,
-        start_row: usize,
-        start_col: usize,
-    ) -> Option<(usize, usize)> {
-        if pat.is_empty() {
-            return None;
-        }
-        let total = self.line_count();
-        for offset in 0..total {
-            let row = if start_row >= offset {
-                start_row - offset
-            } else {
-                total - (offset - start_row)
-            };
-            let line = self.line(row);
-            let to_byte = if offset == 0 {
-                self.byte_offset(row, start_col)
-            } else {
-                line.len()
-            };
-
-            if let Some(pos) = line[..to_byte].rfind(pat) {
-                let col = line[..pos].chars().count();
-                return Some((row, col));
-            }
-        }
-        None
-    }
-}
-
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
-enum CharClass {
-    Word,
-    Punct,
-    Whitespace,
-}
-
-fn char_class(c: char) -> CharClass {
-    if c.is_whitespace() {
-        CharClass::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
-        CharClass::Word
-    } else {
-        CharClass::Punct
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MotionType {
-    Inclusive,
-    Exclusive,
-    Line,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mode
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Default)]
-pub enum Mode {
-    #[default]
-    Normal,
-    Insert,
-    Visual,
-    Command,
-    Search {
-        forward: bool,
-    },
-}
-
-impl Mode {
-    pub fn label(&self) -> &'static str {
-        match self {
-            Mode::Normal => "NORMAL",
-            Mode::Insert => "INSERT",
-            Mode::Visual => "VISUAL",
-            Mode::Command => "COMMAND",
-            Mode::Search { forward: true } => "SEARCH↓",
-            Mode::Search { forward: false } => "SEARCH↑",
-        }
-    }
-    pub fn color(&self) -> Color {
-        match self {
-            Mode::Normal => theme::BLUE,
-            Mode::Insert => theme::GREEN,
-            Mode::Visual => theme::MAGENTA,
-            Mode::Command | Mode::Search { .. } => theme::YELLOW,
-        }
-    }
-}
+use history::{History, HistoryEntry, Registers};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EditorState — pure logic, no iocraft types
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
-pub struct HistoryEntry {
-    pub buffer: Buffer,
-    pub row: usize,
-    pub col: usize,
-}
-
+/// The complete state of the editor, owning the buffer, cursor, mode, and all
+/// editing sub-systems (registers, history, search, visual selection).
+///
+/// This is a pure-logic struct with no iocraft dependencies. Key presses are
+/// dispatched via [`handle_key`], which reads and mutates
+/// the state to implement Vim-style editing.
 pub struct EditorState {
+    /// The text buffer being edited.
     pub buf: Buffer,
+    /// Cursor row (0-indexed line number).
     pub row: usize,
+    /// Cursor column (0-indexed character index within the line).
     pub col: usize,
+    /// The desired column for vertical movement — restores `col` when moving
+    /// to a longer line after a shorter one (Vim's "column want" behavior).
     pub col_want: usize,
+    /// Current input mode determining how key presses are interpreted.
     pub mode: Mode,
+    /// Text typed in command-line mode (`:` prefix), executed on Enter.
     pub cmd_buf: String,
+    /// Digit characters typed for a count prefix (e.g., `"3"` in `3dd`).
     pub count_buf: String,
+    /// A pending operator awaiting a motion (e.g., `d` in `dw` before `w` is typed).
     pub operator: Option<char>,
+    /// A pending find/till motion awaiting its target character (e.g., `f` before `x` in `fx`).
     pub pending: Option<char>,
+    /// Last find/till target for `;` and `,` repeat (character, is_backward).
     pub last_find: Option<(char, bool)>,
-    pub registers: HashMap<char, String>,
+    /// Named registers for yank/paste operations.
+    pub registers: Registers,
+    /// The start position of the current visual selection.
     pub visual_start: (usize, usize),
-    pub undo_stack: VecDeque<HistoryEntry>,
-    pub redo_stack: VecDeque<HistoryEntry>,
+    /// Undo/redo history stack.
+    pub history: History,
+    /// File path associated with this buffer (used for `:w` / `:wq`).
     pub filename: String,
+    /// `true` if the buffer has unsaved modifications.
     pub modified: bool,
+    /// Status message displayed in the command line (cleared on next keypress).
     pub message: String,
+    /// The last search pattern (for `n`/`N` repeat).
     pub last_search: String,
+    /// `true` if the last search was forward (`/`); `false` for backward (`?`).
     pub search_forward: bool,
+    /// Number of visible lines in the viewport (for Ctrl-D/U/F/B scrolling).
     pub view_height: usize,
+    /// Number of visible columns in the viewport (for line wrapping).
     pub view_width: usize,
-    pub clipboard: Option<Clipboard>,
+    /// Set to `true` when the editor should trigger a full re-render.
     pub needs_rerender: bool,
 }
 
 impl EditorState {
+    /// Creates a new editor state with the given `filename` and initial `content`.
+    ///
+    /// The cursor starts at row 0, column 0, in Normal mode.
     pub fn new(filename: String, content: &str) -> Self {
         Self {
             buf: Buffer::new(content),
@@ -458,10 +83,9 @@ impl EditorState {
             operator: None,
             pending: None,
             last_find: None,
-            registers: HashMap::new(),
+            registers: Registers::new(),
             visual_start: (0, 0),
-            undo_stack: VecDeque::new(),
-            redo_stack: VecDeque::new(),
+            history: History::new(),
             filename,
             modified: false,
             message: String::new(),
@@ -469,34 +93,32 @@ impl EditorState {
             search_forward: true,
             view_height: 20,
             view_width: 80,
-            clipboard: Clipboard::new().ok(),
             needs_rerender: false,
         }
     }
 
-    fn count(&self) -> usize {
+    /// Returns the numeric count from the count buffer, defaulting to 1.
+    pub(crate) fn count(&self) -> usize {
         self.count_buf.parse::<usize>().unwrap_or(1).max(1)
     }
 
-    fn push_undo(&mut self) {
-        self.undo_stack.push_back(HistoryEntry {
+    /// Saves the current buffer state and cursor position to the undo stack.
+    pub(crate) fn push_undo(&mut self) {
+        self.history.push(HistoryEntry {
             buffer: self.buf.clone(),
             row: self.row,
             col: self.col,
         });
-        if self.undo_stack.len() > 200 {
-            self.undo_stack.pop_front();
-        }
-        self.redo_stack.clear();
     }
 
-    fn undo(&mut self) {
-        if let Some(e) = self.undo_stack.pop_back() {
-            self.redo_stack.push_back(HistoryEntry {
-                buffer: self.buf.clone(),
-                row: self.row,
-                col: self.col,
-            });
+    /// Restores the previous buffer state from the undo stack.
+    pub(crate) fn undo(&mut self) {
+        let current = HistoryEntry {
+            buffer: self.buf.clone(),
+            row: self.row,
+            col: self.col,
+        };
+        if let Some(e) = self.history.undo(current) {
             self.buf = e.buffer;
             self.row = e.row;
             self.col = e.col;
@@ -507,13 +129,14 @@ impl EditorState {
         }
     }
 
-    fn redo(&mut self) {
-        if let Some(e) = self.redo_stack.pop_back() {
-            self.undo_stack.push_back(HistoryEntry {
-                buffer: self.buf.clone(),
-                row: self.row,
-                col: self.col,
-            });
+    /// Restores the buffer state from the redo stack (re-applies an undone change).
+    pub(crate) fn redo(&mut self) {
+        let current = HistoryEntry {
+            buffer: self.buf.clone(),
+            row: self.row,
+            col: self.col,
+        };
+        if let Some(e) = self.history.redo(current) {
             self.buf = e.buffer;
             self.row = e.row;
             self.col = e.col;
@@ -524,7 +147,8 @@ impl EditorState {
         }
     }
 
-    fn clamp(&mut self) {
+    /// Clamps `row` and `col` to valid positions within the buffer.
+    pub(crate) fn clamp(&mut self) {
         let n = self.buf.line_count();
         if self.row >= n {
             self.row = n - 1;
@@ -534,50 +158,43 @@ impl EditorState {
             .clamp_col(self.row, self.col, self.mode == Mode::Insert);
     }
 
+    /// Returns the byte offset of the cursor from the start of the full document text.
+    ///
+    /// Used to map the logical `(row, col)` position to a byte position for the
+    /// rendering layer in [`blocks_renderer`](crate::components::blocks_renderer).
     pub fn absolute_byte_offset(&self) -> usize {
         let mut offset = 0;
         for i in 0..self.row {
-            offset += self.buf.line(i).len() + 1; // +1 for \n
+            offset += self.buf.line(i).len() + 1;
         }
         offset += self.buf.byte_offset(self.row, self.col);
         offset
     }
 
+    /// Returns the byte offset of the given `(row, col)` position from the start of the document.
+    ///
+    /// Like [`absolute_byte_offset`](EditorState::absolute_byte_offset) but accepts
+    /// arbitrary coordinates instead of using the current cursor position.
     pub fn absolute_byte_offset_at(&self, row: usize, col: usize) -> usize {
         let mut offset = 0;
         for i in 0..row {
-            offset += self.buf.line(i).len() + 1; // +1 for \n
+            offset += self.buf.line(i).len() + 1;
         }
         offset += self.buf.byte_offset(row, col);
         offset
     }
 
-    fn yank(&mut self, reg: char, text: String) {
-        self.registers.insert(reg, text.clone());
-        self.registers.insert('"', text.clone());
-
-        if reg == '"' {
-            if let Some(cb) = self.clipboard.as_mut() {
-                let _ = cb.set_text(text);
-            }
-        }
+    /// Stores `text` in the given register.
+    pub(crate) fn yank(&mut self, reg: char, text: String) {
+        self.registers.yank(reg, text);
     }
 
-    fn resolve_paste_text(&mut self, reg: char) -> String {
-        if reg == '"' {
-            if let Some(cb) = self.clipboard.as_mut() {
-                if let Ok(text) = cb.get_text() {
-                    if !text.is_empty() {
-                        return text;
-                    }
-                }
-            }
-        }
-        self.registers.get(&reg).cloned().unwrap_or_default()
-    }
-
-    fn paste_after(&mut self, reg: char) {
-        let text = self.resolve_paste_text(reg);
+    /// Pastes register content after the cursor.
+    ///
+    /// Linewise pastes (text ending with `\n`) insert new lines below the current line.
+    /// Charwise pastes insert inline at the cursor position.
+    pub(crate) fn paste_after(&mut self, reg: char) {
+        let text = self.registers.resolve_paste_text(reg);
         if text.is_empty() {
             return;
         }
@@ -603,8 +220,12 @@ impl EditorState {
         self.clamp();
     }
 
-    fn paste_before(&mut self, reg: char) {
-        let text = self.resolve_paste_text(reg);
+    /// Pastes register content before the cursor.
+    ///
+    /// Linewise pastes insert new lines above the current line.
+    /// Charwise pastes insert inline at the cursor position.
+    pub(crate) fn paste_before(&mut self, reg: char) {
+        let text = self.registers.resolve_paste_text(reg);
         if text.is_empty() {
             return;
         }
@@ -627,7 +248,15 @@ impl EditorState {
         self.clamp();
     }
 
-    fn apply_motion(&self, motion: char, target: Option<char>) -> Option<(usize, usize)> {
+    /// Computes the destination `(row, col)` for a single-character motion.
+    ///
+    /// Supports `h`, `l`, `j`, `k`, `0`, `^`, `$`, `w`, `b`, `e`, `G`, `{`, `}`,
+    /// `f`, `t`, `F`, `T`. Returns `None` for unrecognized motions.
+    pub(crate) fn apply_motion(
+        &self,
+        motion: char,
+        target: Option<char>,
+    ) -> Option<(usize, usize)> {
         let (r, c) = (self.row, self.col);
         let nlines = self.buf.line_count();
         let count = self.count();
@@ -696,7 +325,13 @@ impl EditorState {
         }
     }
 
-    fn execute_operator(
+    /// Executes an operator (`d`, `c`, `y`) over the range from the cursor to `dest`.
+    ///
+    /// The range is defined by `motion_type`: inclusive, exclusive, or linewise.
+    /// For `d`/`c`, the affected text is deleted and (for `c`) the editor enters Insert mode.
+    /// For `y`, the text is yanked without deletion.
+    /// `reg` specifies the register for the yank.
+    pub(crate) fn execute_operator(
         &mut self,
         op: char,
         dest: (usize, usize),
@@ -794,7 +429,11 @@ impl EditorState {
         }
     }
 
-    fn delete_lines(&mut self, count: usize, reg: char) {
+    /// Deletes `count` lines starting at the current row.
+    ///
+    /// Yanks the deleted lines to the specified register. If the cursor moves past
+    /// the end of the buffer, it clamps to the last line.
+    pub(crate) fn delete_lines(&mut self, count: usize, reg: char) {
         self.push_undo();
         let mut yanked = String::new();
         for _ in 0..count {
@@ -812,7 +451,11 @@ impl EditorState {
         self.modified = true;
     }
 
-    fn yank_lines(&mut self, count: usize, reg: char) {
+    /// Yanks `count` lines starting at the current row into the given register.
+    ///
+    /// Each yanked line includes a trailing newline. Sets a status message
+    /// indicating how many lines were yanked.
+    pub(crate) fn yank_lines(&mut self, count: usize, reg: char) {
         let mut yanked = String::new();
         for i in 0..count {
             let r = (self.row + i).min(self.buf.line_count() - 1);
@@ -823,7 +466,17 @@ impl EditorState {
         self.message = format!("{} line{} yanked", count, if count != 1 { "s" } else { "" });
     }
 
-    fn execute_command(&mut self) -> bool {
+    /// Executes the command typed in command-line mode (`cmd_buf`).
+    ///
+    /// Returns `true` if the editor should quit. Supported commands:
+    /// - `:w` / `:write` — write file to disk
+    /// - `:q` — quit (fails if unsaved changes)
+    /// - `:q!` — force quit
+    /// - `:wq` / `:x` — write and quit
+    /// - `:wq!` — force write and quit
+    /// - `:N` — jump to line number N
+    /// - `:math` / `:math unicode` / `:math image` — toggle math rendering mode
+    pub(crate) fn execute_command(&mut self) -> bool {
         let cmd = self.cmd_buf.clone();
         self.cmd_buf.clear();
         self.mode = Mode::Normal;
@@ -854,14 +507,20 @@ impl EditorState {
                 }
             }
             "q!" => true,
-            "wq" | "x" => {
-                let _ = std::fs::write(&self.filename, self.buf.to_text());
-                true
-            }
-            "wq!" => {
-                let _ = std::fs::write(&self.filename, self.buf.to_text());
-                true
-            }
+            "wq" | "x" => match std::fs::write(&self.filename, self.buf.to_text()) {
+                Ok(_) => true,
+                Err(e) => {
+                    self.message = format!("E: {}", e);
+                    false
+                }
+            },
+            "wq!" => match std::fs::write(&self.filename, self.buf.to_text()) {
+                Ok(_) => true,
+                Err(e) => {
+                    self.message = format!("E: {}", e);
+                    false
+                }
+            },
             "math" => {
                 let new = math::toggle_math_mode();
                 self.message = format!(
@@ -895,736 +554,13 @@ impl EditorState {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Key handling (pure, no iocraft)
-// ─────────────────────────────────────────────────────────────────────────────
-
-pub fn handle_key(s: &mut EditorState, code: KeyCode, ctrl: bool) -> bool {
-    s.message.clear();
-    match s.mode.clone() {
-        Mode::Insert => handle_insert(s, code, ctrl),
-        Mode::Command => handle_cmdline(s, code),
-        Mode::Search { forward } => handle_search(s, code, forward),
-        Mode::Visual => handle_visual(s, code),
-        Mode::Normal => handle_normal(s, code, ctrl),
-    }
-}
-
-fn handle_insert(s: &mut EditorState, code: KeyCode, ctrl: bool) -> bool {
-    match code {
-        KeyCode::Esc => {
-            s.mode = Mode::Normal;
-            s.col = s.col.saturating_sub(1);
-            s.clamp();
-            s.col_want = s.col;
-        }
-        KeyCode::Char('c') if ctrl => {
-            s.mode = Mode::Normal;
-            s.col = s.col.saturating_sub(1);
-            s.clamp();
-            s.col_want = s.col;
-        }
-        KeyCode::Char(c) if !ctrl => {
-            s.buf.insert_char(s.row, s.col, c);
-            s.col += 1;
-            s.modified = true;
-        }
-        KeyCode::Enter => {
-            s.buf.split_line(s.row, s.col);
-            s.row += 1;
-            s.col = 0;
-            s.modified = true;
-        }
-        KeyCode::Backspace => {
-            if s.col > 0 {
-                s.col -= 1;
-                s.buf.delete_char(s.row, s.col);
-                s.modified = true;
-            } else if s.row > 0 {
-                let prev = s.buf.char_count(s.row - 1);
-                s.buf.join_lines(s.row - 1);
-                s.row -= 1;
-                s.col = prev;
-                s.modified = true;
-            }
-        }
-        KeyCode::Delete => {
-            if s.col < s.buf.char_count(s.row) {
-                s.buf.delete_char(s.row, s.col);
-                s.modified = true;
-            } else if s.row + 1 < s.buf.line_count() {
-                s.buf.join_lines(s.row);
-                s.modified = true;
-            }
-        }
-        KeyCode::Left => {
-            if s.col > 0 {
-                s.col -= 1;
-            }
-        }
-        KeyCode::Right => {
-            let l = s.buf.char_count(s.row);
-            if s.col < l {
-                s.col += 1;
-            }
-        }
-        KeyCode::Up => {
-            if s.row > 0 {
-                s.row -= 1;
-                s.clamp();
-            }
-        }
-        KeyCode::Down => {
-            if s.row + 1 < s.buf.line_count() {
-                s.row += 1;
-                s.clamp();
-            }
-        }
-        KeyCode::Home => {
-            s.col = 0;
-        }
-        KeyCode::End => {
-            s.col = s.buf.char_count(s.row);
-        }
-        _ => {}
-    }
-    false
-}
-
-fn handle_cmdline(s: &mut EditorState, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Esc => {
-            s.mode = Mode::Normal;
-            s.cmd_buf.clear();
-            false
-        }
-        KeyCode::Enter => s.execute_command(),
-        KeyCode::Backspace => {
-            if s.cmd_buf.is_empty() {
-                s.mode = Mode::Normal;
-            } else {
-                s.cmd_buf.pop();
-            }
-            false
-        }
-        KeyCode::Char(c) => {
-            s.cmd_buf.push(c);
-            false
-        }
-        _ => false,
-    }
-}
-
-fn handle_search(s: &mut EditorState, code: KeyCode, forward: bool) -> bool {
-    match code {
-        KeyCode::Esc => {
-            s.mode = Mode::Normal;
-            s.cmd_buf.clear();
-        }
-        KeyCode::Enter => {
-            s.last_search = s.cmd_buf.clone();
-            s.search_forward = forward;
-            s.cmd_buf.clear();
-            s.mode = Mode::Normal;
-            s.needs_rerender = true;
-            do_search(s, forward);
-        }
-        KeyCode::Backspace => {
-            s.cmd_buf.pop();
-        }
-        KeyCode::Char(c) => {
-            s.cmd_buf.push(c);
-        }
-        _ => {}
-    }
-    false
-}
-
-fn do_search(s: &mut EditorState, forward: bool) {
-    if s.last_search.is_empty() {
-        return;
-    }
-    let res = if forward {
-        s.buf.search_forward(&s.last_search, s.row, s.col)
-    } else {
-        s.buf.search_backward(&s.last_search, s.row, s.col)
-    };
-    match res {
-        Some((r, c)) => {
-            s.row = r;
-            s.col = c;
-        }
-        None => {
-            s.message = format!("Pattern not found: {}", s.last_search);
-        }
-    }
-}
-
-fn handle_visual(s: &mut EditorState, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Esc | KeyCode::Char('v') => {
-            s.mode = Mode::Normal;
-        }
-        KeyCode::Char('d') | KeyCode::Char('x') => {
-            let d = s.visual_start;
-            s.execute_operator('d', d, MotionType::Inclusive, '"');
-            s.mode = Mode::Normal;
-        }
-        KeyCode::Char('y') => {
-            let d = s.visual_start;
-            s.execute_operator('y', d, MotionType::Inclusive, '"');
-            s.mode = Mode::Normal;
-        }
-        KeyCode::Char('c') => {
-            let d = s.visual_start;
-            s.execute_operator('c', d, MotionType::Inclusive, '"');
-        }
-        key => {
-            if let Some(dest) = motion_from_key(s, key) {
-                s.row = dest.0;
-                s.col = dest.1;
-                s.col_want = s.col;
-                s.needs_rerender = true;
-            }
-        }
-    }
-    false
-}
-
-fn motion_from_key(s: &EditorState, key: KeyCode) -> Option<(usize, usize)> {
-    match key {
-        KeyCode::Char(c) => s.apply_motion(c, None),
-        KeyCode::Left => s.apply_motion('h', None),
-        KeyCode::Right => s.apply_motion('l', None),
-        KeyCode::Up => s.apply_motion('k', None),
-        KeyCode::Down => s.apply_motion('j', None),
-        _ => None,
-    }
-}
-
-fn handle_normal(s: &mut EditorState, code: KeyCode, ctrl: bool) -> bool {
-    if ctrl {
-        match code {
-            KeyCode::Char('r') => {
-                let c = s.count();
-                s.count_buf.clear();
-                for _ in 0..c {
-                    s.redo();
-                }
-                s.clamp();
-                return false;
-            }
-            KeyCode::Char('d') => {
-                let h = (s.view_height / 2).max(1);
-                s.row = (s.row + h).min(s.buf.line_count() - 1);
-                s.clamp();
-                s.count_buf.clear();
-                return false;
-            }
-            KeyCode::Char('u') => {
-                let h = (s.view_height / 2).max(1);
-                s.row = s.row.saturating_sub(h);
-                s.clamp();
-                s.count_buf.clear();
-                return false;
-            }
-            KeyCode::Char('f') => {
-                s.row = (s.row + s.view_height).min(s.buf.line_count() - 1);
-                s.clamp();
-                s.count_buf.clear();
-                return false;
-            }
-            KeyCode::Char('b') => {
-                s.row = s.row.saturating_sub(s.view_height);
-                s.clamp();
-                s.count_buf.clear();
-                return false;
-            }
-            _ => {}
-        }
-    }
-
-    // Resolve pending two-char sequences
-    if let Some(pend) = s.pending {
-        s.pending = None;
-        match pend {
-            'g' => {
-                if code == KeyCode::Char('g') {
-                    let dest = (0, s.buf.first_non_blank(0));
-                    if let Some(op) = s.operator.take() {
-                        s.execute_operator(op, dest, MotionType::Line, '"');
-                    } else {
-                        s.row = dest.0;
-                        s.col = dest.1;
-                        s.col_want = s.col;
-                    }
-                }
-                s.count_buf.clear();
-                return false;
-            }
-            'Z' => {
-                if code == KeyCode::Char('Z') {
-                    let _ = std::fs::write(&s.filename, s.buf.to_text());
-                    return true;
-                }
-                if code == KeyCode::Char('Q') {
-                    return true;
-                }
-                s.count_buf.clear();
-                return false;
-            }
-            'r' => {
-                if let KeyCode::Char(c) = code {
-                    s.push_undo();
-                    s.buf.delete_char(s.row, s.col);
-                    s.buf.insert_char(s.row, s.col, c);
-                    s.modified = true;
-                }
-                s.count_buf.clear();
-                return false;
-            }
-            m @ ('f' | 't' | 'F' | 'T') => {
-                if let KeyCode::Char(target) = code {
-                    let backward = m == 'F' || m == 'T';
-                    s.last_find = Some((target, backward));
-                    if let Some(dest) = s.apply_motion(m, Some(target)) {
-                        if let Some(op) = s.operator.take() {
-                            s.execute_operator(op, dest, MotionType::Inclusive, '"');
-                        } else {
-                            s.row = dest.0;
-                            s.col = dest.1;
-                            s.col_want = s.col;
-                        }
-                    }
-                }
-                s.count_buf.clear();
-                s.clamp();
-                return false;
-            }
-            _ => {
-                s.count_buf.clear();
-                return false;
-            }
-        }
-    }
-
-    match code {
-        // Count digits
-        KeyCode::Char(d @ '1'..='9') if s.count_buf.len() < 8 => {
-            s.count_buf.push(d);
-            return false;
-        }
-        KeyCode::Char('0') if !s.count_buf.is_empty() => {
-            s.count_buf.push('0');
-            return false;
-        }
-
-        // Enter insert
-        KeyCode::Char('i') => {
-            s.push_undo();
-            s.mode = Mode::Insert;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('I') => {
-            s.push_undo();
-            s.col = s.buf.first_non_blank(s.row);
-            s.mode = Mode::Insert;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('a') => {
-            s.push_undo();
-            let l = s.buf.char_count(s.row);
-            if l > 0 {
-                s.col = (s.col + 1).min(l);
-            }
-            s.mode = Mode::Insert;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('A') => {
-            s.push_undo();
-            s.col = s.buf.char_count(s.row);
-            s.mode = Mode::Insert;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('o') => {
-            s.push_undo();
-            s.buf.insert_line(s.row + 1, String::new());
-            s.row += 1;
-            s.col = 0;
-            s.mode = Mode::Insert;
-            s.modified = true;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('O') => {
-            s.push_undo();
-            s.buf.insert_line(s.row, String::new());
-            s.col = 0;
-            s.mode = Mode::Insert;
-            s.modified = true;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('s') => {
-            s.push_undo();
-            if let Some(c) = s.buf.delete_char(s.row, s.col) {
-                s.yank('"', c.to_string());
-            }
-            s.mode = Mode::Insert;
-            s.modified = true;
-            s.count_buf.clear();
-            return false;
-        }
-
-        // Visual / command / search
-        KeyCode::Char('v') => {
-            s.visual_start = (s.row, s.col);
-            s.mode = Mode::Visual;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char(':') => {
-            s.mode = Mode::Command;
-            s.cmd_buf.clear();
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('/') => {
-            s.mode = Mode::Search { forward: true };
-            s.cmd_buf.clear();
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('?') => {
-            s.mode = Mode::Search { forward: false };
-            s.cmd_buf.clear();
-            s.count_buf.clear();
-            return false;
-        }
-
-        // Undo / search repeat
-        KeyCode::Char('u') => {
-            let c = s.count();
-            s.count_buf.clear();
-            for _ in 0..c {
-                s.undo();
-            }
-            s.clamp();
-            return false;
-        }
-        KeyCode::Char('n') => {
-            do_search(s, s.search_forward);
-            s.needs_rerender = true;
-            s.count_buf.clear();
-            return false;
-        }
-        KeyCode::Char('N') => {
-            let fwd = !s.search_forward;
-            do_search(s, fwd);
-            s.needs_rerender = true;
-            s.count_buf.clear();
-            return false;
-        }
-
-        // Operators
-        KeyCode::Char(op @ ('d' | 'c' | 'y')) => {
-            if s.operator == Some(op) {
-                let count = s.count();
-                s.count_buf.clear();
-                s.operator = None;
-                match op {
-                    'd' => s.delete_lines(count, '"'),
-                    'y' => s.yank_lines(count, '"'),
-                    'c' => {
-                        s.push_undo();
-                        s.yank_lines(count, '"');
-                        for _ in 1..count {
-                            if s.row + 1 < s.buf.line_count() {
-                                s.buf.delete_line(s.row + 1);
-                            } else if s.row > 0 {
-                                s.buf.delete_line(s.row);
-                                s.row -= 1;
-                            }
-                        }
-                        s.buf.lines[s.row].clear();
-                        s.col = 0;
-                        s.mode = Mode::Insert;
-                        s.modified = true;
-                    }
-                    _ => {}
-                }
-            } else {
-                s.operator = Some(op);
-                return false;
-            }
-        }
-
-        // x X
-        KeyCode::Char('x') | KeyCode::Delete => {
-            s.push_undo();
-            let count = s.count();
-            s.count_buf.clear();
-            let mut cut = String::new();
-            for _ in 0..count {
-                if s.col < s.buf.char_count(s.row) {
-                    if let Some(c) = s.buf.delete_char(s.row, s.col) {
-                        cut.push(c);
-                    }
-                }
-            }
-            if !cut.is_empty() {
-                s.yank('"', cut);
-            }
-            s.clamp();
-            s.modified = true;
-        }
-        KeyCode::Char('X') => {
-            s.push_undo();
-            if s.col > 0 {
-                s.col -= 1;
-                if let Some(c) = s.buf.delete_char(s.row, s.col) {
-                    s.yank('"', c.to_string());
-                }
-                s.modified = true;
-            }
-        }
-
-        // r (replace)
-        KeyCode::Char('r') => {
-            s.pending = Some('r');
-            return false;
-        }
-
-        // Paste
-        KeyCode::Char('p') => {
-            let count = s.count();
-            s.count_buf.clear();
-            s.push_undo();
-            for _ in 0..count {
-                s.paste_after('"');
-            }
-        }
-        KeyCode::Char('P') => {
-            let count = s.count();
-            s.count_buf.clear();
-            s.push_undo();
-            for _ in 0..count {
-                s.paste_before('"');
-            }
-        }
-
-        // J ~ >> <<
-        KeyCode::Char('J') => {
-            s.push_undo();
-            let c = s.count().saturating_sub(1).max(1);
-            s.count_buf.clear();
-            for _ in 0..c {
-                if s.row + 1 < s.buf.line_count() {
-                    let next = s.buf.lines.remove(s.row + 1);
-                    let trimmed_next = next.trim_start();
-                    if !s.buf.lines[s.row].is_empty()
-                        && !s.buf.lines[s.row].ends_with(' ')
-                        && !trimmed_next.is_empty()
-                    {
-                        s.buf.lines[s.row].push(' ');
-                    }
-                    s.buf.lines[s.row].push_str(trimmed_next);
-                }
-            }
-            s.modified = true;
-        }
-        KeyCode::Char('~') => {
-            s.push_undo();
-            if let Some(c) = s.buf.line(s.row).chars().nth(s.col) {
-                let tog: String = if c.is_uppercase() {
-                    c.to_lowercase().collect()
-                } else {
-                    c.to_uppercase().collect()
-                };
-                s.buf.replace_range_on_line(s.row, s.col, s.col + 1, &tog);
-                s.col = (s.col + 1).min(s.buf.char_count(s.row).saturating_sub(1));
-                s.modified = true;
-            }
-        }
-        KeyCode::Char('>') if s.operator == Some('>') => {
-            s.push_undo();
-            let c = s.count();
-            s.operator = None;
-            s.count_buf.clear();
-            for i in 0..c {
-                let r = (s.row + i).min(s.buf.line_count() - 1);
-                s.buf.lines[r].insert_str(0, "    ");
-            }
-            s.modified = true;
-        }
-        KeyCode::Char('<') if s.operator == Some('<') => {
-            s.push_undo();
-            let c = s.count();
-            s.operator = None;
-            s.count_buf.clear();
-            for i in 0..c {
-                let r = (s.row + i).min(s.buf.line_count() - 1);
-                let sp = s.buf.lines[r]
-                    .chars()
-                    .take_while(|&c| c == ' ')
-                    .count()
-                    .min(4);
-                s.buf.lines[r] = s.buf.lines[r][sp..].to_string();
-            }
-            s.modified = true;
-        }
-        KeyCode::Char('>') => {
-            s.operator = Some('>');
-            return false;
-        }
-        KeyCode::Char('<') => {
-            s.operator = Some('<');
-            return false;
-        }
-
-        // Two-char sequences
-        KeyCode::Char('g') => {
-            s.pending = Some('g');
-            return false;
-        }
-        KeyCode::Char('Z') => {
-            s.pending = Some('Z');
-            return false;
-        }
-        KeyCode::Char(m @ ('f' | 't' | 'F' | 'T')) => {
-            s.pending = Some(m);
-            return false;
-        }
-
-        // ; ,
-        KeyCode::Char(';') | KeyCode::Char(',') => {
-            if let Some((target, was_backward)) = s.last_find {
-                let fwd = if code == KeyCode::Char(';') {
-                    !was_backward
-                } else {
-                    was_backward
-                };
-                let nc = if fwd {
-                    s.buf.find_forward(s.row, s.col, target, false)
-                } else {
-                    s.buf.find_backward(s.row, s.col, target, false)
-                };
-                if let Some(c) = nc {
-                    s.col = c;
-                    s.col_want = s.col;
-                }
-            }
-        }
-
-        // G
-        KeyCode::Char('G') => {
-            if let Some(dest) = s.apply_motion('G', None) {
-                if let Some(op) = s.operator.take() {
-                    s.execute_operator(op, dest, MotionType::Line, '"');
-                } else {
-                    s.row = dest.0;
-                    s.col = dest.1;
-                    s.col_want = s.col;
-                }
-            }
-        }
-
-        // j k (sticky col)
-        KeyCode::Char('j') | KeyCode::Down => {
-            let count = s.count();
-            s.count_buf.clear();
-            if let Some(op) = s.operator.take() {
-                let dest = ((s.row + count).min(s.buf.line_count() - 1), s.col);
-                s.execute_operator(op, dest, MotionType::Line, '"');
-            } else {
-                for _ in 0..count {
-                    if s.row + 1 < s.buf.line_count() {
-                        s.row += 1;
-                        s.col = s.buf.clamp_col(s.row, s.col_want, false);
-                    }
-                }
-            }
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            let count = s.count();
-            s.count_buf.clear();
-            if let Some(op) = s.operator.take() {
-                let dest = (s.row.saturating_sub(count), s.col);
-                s.execute_operator(op, dest, MotionType::Line, '"');
-            } else {
-                for _ in 0..count {
-                    if s.row > 0 {
-                        s.row -= 1;
-                        s.col = s.buf.clamp_col(s.row, s.col_want, false);
-                    }
-                }
-            }
-        }
-
-        // All other motions (+ optional operator)
-        KeyCode::Char('h')
-        | KeyCode::Left
-        | KeyCode::Char('l')
-        | KeyCode::Right
-        | KeyCode::Char('w')
-        | KeyCode::Char('b')
-        | KeyCode::Char('e')
-        | KeyCode::Char('0')
-        | KeyCode::Char('^')
-        | KeyCode::Char('$')
-        | KeyCode::Char('{')
-        | KeyCode::Char('}') => {
-            let ch = match code {
-                KeyCode::Char(c) => c,
-                KeyCode::Left => 'h',
-                KeyCode::Right => 'l',
-                _ => unreachable!(),
-            };
-            if let Some(dest) = s.apply_motion(ch, None) {
-                if let Some(op) = s.operator.take() {
-                    let motion_type = match ch {
-                        '$' | 'e' => MotionType::Inclusive,
-                        '{' | '}' => MotionType::Line,
-                        _ => MotionType::Exclusive,
-                    };
-                    s.execute_operator(op, dest, motion_type, '"');
-                } else {
-                    s.row = dest.0;
-                    s.col = dest.1;
-                    s.col_want = s.col;
-                }
-            }
-        }
-
-        KeyCode::PageDown => {
-            s.row = (s.row + s.view_height).min(s.buf.line_count() - 1);
-            s.clamp();
-        }
-        KeyCode::PageUp => {
-            s.row = s.row.saturating_sub(s.view_height);
-            s.clamp();
-        }
-
-        _ => {}
-    }
-
-    if s.operator.is_none() && s.pending.is_none() {
-        s.count_buf.clear();
-    }
-    s.clamp();
-    false
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iocraft::prelude::*;
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1667,130 +603,6 @@ mod tests {
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    // 1. Buffer Basics
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn buffer_new_single_line() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.lines, vec!["hello"]);
-        assert_eq!(b.line_count(), 1);
-    }
-
-    #[test]
-    fn buffer_new_multi_line() {
-        let b = Buffer::new("hello\nworld\nfoo");
-        assert_eq!(b.lines, vec!["hello", "world", "foo"]);
-        assert_eq!(b.line_count(), 3);
-    }
-
-    #[test]
-    fn buffer_new_empty() {
-        let b = Buffer::new("");
-        assert_eq!(b.lines, vec![""]);
-        assert_eq!(b.line_count(), 1);
-    }
-
-    #[test]
-    fn buffer_to_text_roundtrip() {
-        let text = "line1\nline2\nline3";
-        let b = Buffer::new(text);
-        assert_eq!(b.to_text(), text);
-    }
-
-    #[test]
-    fn buffer_char_count() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.char_count(0), 5);
-    }
-
-    #[test]
-    fn buffer_clamp_col_normal_mode() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.clamp_col(0, 10, false), 4); // last valid char index
-        assert_eq!(b.clamp_col(0, 2, false), 2);
-    }
-
-    #[test]
-    fn buffer_clamp_col_insert_mode() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.clamp_col(0, 10, true), 5); // can be at len (after last char)
-        assert_eq!(b.clamp_col(0, 2, true), 2);
-    }
-
-    #[test]
-    fn buffer_clamp_col_empty_line() {
-        let b = Buffer::new("");
-        assert_eq!(b.clamp_col(0, 0, false), 0);
-        assert_eq!(b.clamp_col(0, 5, false), 0);
-    }
-
-    #[test]
-    fn buffer_byte_offset_ascii() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.byte_offset(0, 0), 0);
-        assert_eq!(b.byte_offset(0, 3), 3);
-        assert_eq!(b.byte_offset(0, 5), 5); // past end
-    }
-
-    #[test]
-    fn buffer_insert_char() {
-        let mut b = Buffer::new("hllo");
-        b.insert_char(0, 1, 'e');
-        assert_eq!(b.lines[0], "hello");
-    }
-
-    #[test]
-    fn buffer_delete_char() {
-        let mut b = Buffer::new("hello");
-        let ch = b.delete_char(0, 1);
-        assert_eq!(ch, Some('e'));
-        assert_eq!(b.lines[0], "hllo");
-    }
-
-    #[test]
-    fn buffer_split_line() {
-        let mut b = Buffer::new("helloworld");
-        b.split_line(0, 5);
-        assert_eq!(b.lines, vec!["hello", "world"]);
-    }
-
-    #[test]
-    fn buffer_join_lines() {
-        let mut b = Buffer::new("hello\nworld");
-        b.join_lines(0);
-        assert_eq!(b.lines, vec!["helloworld"]);
-    }
-
-    #[test]
-    fn buffer_delete_line_multi() {
-        let mut b = Buffer::new("aaa\nbbb\nccc");
-        let removed = b.delete_line(1);
-        assert_eq!(removed, "bbb");
-        assert_eq!(b.lines, vec!["aaa", "ccc"]);
-    }
-
-    #[test]
-    fn buffer_delete_line_last_remaining() {
-        let mut b = Buffer::new("only");
-        let removed = b.delete_line(0);
-        assert_eq!(removed, "only");
-        assert_eq!(b.lines, vec![""]); // buffer never empty
-    }
-
-    #[test]
-    fn buffer_first_non_blank() {
-        let b = Buffer::new("   hello");
-        assert_eq!(b.first_non_blank(0), 3);
-    }
-
-    #[test]
-    fn buffer_first_non_blank_no_indent() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.first_non_blank(0), 0);
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
     // 2. Basic Motions h/j/k/l
     // ═════════════════════════════════════════════════════════════════════
 
@@ -1822,7 +634,7 @@ mod tests {
     fn motion_l_stops_at_end() {
         let mut s = ed("hi");
         keys(&mut s, "llll");
-        assert_eq!(s.col, 1); // 'i' is last char at index 1
+        assert_eq!(s.col, 1);
     }
 
     #[test]
@@ -1873,11 +685,11 @@ mod tests {
     #[test]
     fn motion_j_clamps_col_to_shorter_line() {
         let mut s = ed("hello\nhi\nworld");
-        s.col = 4; // at 'o'
+        s.col = 4;
         s.col_want = 4;
         key(&mut s, 'j');
         assert_eq!(s.row, 1);
-        assert_eq!(s.col, 1); // 'hi' only has indices 0,1
+        assert_eq!(s.col, 1);
     }
 
     #[test]
@@ -1887,7 +699,7 @@ mod tests {
         s.col_want = 4;
         keys(&mut s, "jj");
         assert_eq!(s.row, 2);
-        assert_eq!(s.col, 4); // back to col_want on longer line
+        assert_eq!(s.col, 4);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -1898,13 +710,13 @@ mod tests {
     fn motion_w_basic() {
         let mut s = ed("hello world");
         key(&mut s, 'w');
-        assert_eq!(s.col, 6); // 'w' of "world"
+        assert_eq!(s.col, 6);
     }
 
     #[test]
     fn motion_w_at_end_of_line_goes_to_next_line() {
         let mut s = ed("hello\nworld");
-        s.col = 4; // at 'o'
+        s.col = 4;
         key(&mut s, 'w');
         assert_eq!(s.row, 1);
         assert_eq!(s.col, 0);
@@ -1912,20 +724,17 @@ mod tests {
 
     #[test]
     fn motion_w_over_punctuation() {
-        // In vim, w should stop at punctuation boundaries
-        // "hello.world" -> w from 'h' should go to '.'
         let mut s = ed("hello.world");
         key(&mut s, 'w');
-        // Vim would stop at '.' (col 5) because '.' is a different word class
         assert_eq!(s.col, 5, "w should stop at punctuation boundary '.'");
     }
 
     #[test]
     fn motion_b_basic() {
         let mut s = ed("hello world");
-        s.col = 8; // in "world"
+        s.col = 8;
         key(&mut s, 'b');
-        assert_eq!(s.col, 6); // start of "world"
+        assert_eq!(s.col, 6);
     }
 
     #[test]
@@ -1939,11 +748,9 @@ mod tests {
 
     #[test]
     fn motion_b_over_punctuation() {
-        // In vim, b should stop at punctuation boundaries
         let mut s = ed("hello.world");
-        s.col = 8; // in "world"
+        s.col = 8;
         key(&mut s, 'b');
-        // Vim: b from inside "world" goes to start of "world" (col 6)
         assert_eq!(s.col, 6, "b should stop at start of word after punct");
     }
 
@@ -1951,14 +758,13 @@ mod tests {
     fn motion_e_basic() {
         let mut s = ed("hello world");
         key(&mut s, 'e');
-        assert_eq!(s.col, 4); // end of "hello"
+        assert_eq!(s.col, 4);
     }
 
     #[test]
     fn motion_e_over_punctuation() {
         let mut s = ed("hello.world");
         key(&mut s, 'e');
-        // Vim: e from 'h' goes to end of "hello" (col 4)
         assert_eq!(s.col, 4, "e should stop at end of word before punct");
     }
 
@@ -1966,7 +772,7 @@ mod tests {
     fn motion_w_with_count() {
         let mut s = ed("one two three four");
         keys(&mut s, "2w");
-        assert_eq!(s.col, 8); // start of "three"
+        assert_eq!(s.col, 8);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -1992,14 +798,14 @@ mod tests {
     fn motion_dollar_goes_to_end() {
         let mut s = ed("hello");
         key(&mut s, '$');
-        assert_eq!(s.col, 4); // last char index
+        assert_eq!(s.col, 4);
     }
 
     #[test]
     fn motion_dollar_on_empty_line() {
         let mut s = ed("");
         key(&mut s, '$');
-        assert_eq!(s.col, 0); // saturating_sub(1) on 0
+        assert_eq!(s.col, 0);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2008,12 +814,10 @@ mod tests {
 
     #[test]
     fn dollar_sticky_column_with_j() {
-        // After pressing $, moving j should put cursor at end of next line
         let mut s = ed("hello\nhi\nworld");
         key(&mut s, '$');
-        assert_eq!(s.col, 4); // end of "hello"
+        assert_eq!(s.col, 4);
         key(&mut s, 'j');
-        // In vim, $ sets sticky column to infinity, so j goes to end of "hi"
         assert_eq!(s.row, 1);
         assert_eq!(
             s.col, 1,
@@ -2027,7 +831,6 @@ mod tests {
         key(&mut s, '$');
         keys(&mut s, "jj");
         assert_eq!(s.row, 2);
-        // After $, moving down should keep sticking to end
         assert_eq!(s.col, 4, "After $+jj, cursor should be at end of 'world'");
     }
 
@@ -2054,7 +857,7 @@ mod tests {
     fn motion_count_g_goes_to_line_number() {
         let mut s = ed("aaa\nbbb\nccc\nddd");
         keys(&mut s, "2G");
-        assert_eq!(s.row, 1); // line 2 = index 1
+        assert_eq!(s.row, 1);
     }
 
     #[test]
@@ -2062,10 +865,7 @@ mod tests {
         let mut s = ed("aaa\nbbb\nccc\nddd");
         s.row = 3;
         keys(&mut s, "2gg");
-        // gg with count should go to that line number
-        // But the implementation only handles 'g' pending then 'g' char,
-        // and count should be applied. Let's see what it does.
-        assert_eq!(s.row, 0); // gg currently always goes to line 0
+        assert_eq!(s.row, 0);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2076,7 +876,7 @@ mod tests {
     fn motion_close_brace_next_blank_line() {
         let mut s = ed("hello\nworld\n\nfoo");
         key(&mut s, '}');
-        assert_eq!(s.row, 2); // empty line
+        assert_eq!(s.row, 2);
     }
 
     #[test]
@@ -2084,7 +884,7 @@ mod tests {
         let mut s = ed("hello\n\nworld\nfoo");
         s.row = 3;
         key(&mut s, '{');
-        assert_eq!(s.row, 1); // empty line
+        assert_eq!(s.row, 1);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2095,14 +895,14 @@ mod tests {
     fn motion_f_finds_char_forward() {
         let mut s = ed("hello world");
         keys(&mut s, "fo");
-        assert_eq!(s.col, 4); // 'o' in "hello"
+        assert_eq!(s.col, 4);
     }
 
     #[test]
     fn motion_t_stops_before_char() {
         let mut s = ed("hello world");
         keys(&mut s, "to");
-        assert_eq!(s.col, 3); // one before 'o'
+        assert_eq!(s.col, 3);
     }
 
     #[test]
@@ -2110,7 +910,7 @@ mod tests {
         let mut s = ed("hello world");
         s.col = 8;
         keys(&mut s, "Fl");
-        assert_eq!(s.col, 3); // 'l' in "hello"
+        assert_eq!(s.col, 3);
     }
 
     #[test]
@@ -2118,16 +918,15 @@ mod tests {
         let mut s = ed("hello world");
         s.col = 8;
         keys(&mut s, "Tl");
-        assert_eq!(s.col, 4); // one after 'l' going backward
+        assert_eq!(s.col, 4);
     }
 
     #[test]
     fn motion_semicolon_repeats_find() {
         let mut s = ed("abcabc");
         keys(&mut s, "fa");
-        assert_eq!(s.col, 3); // second 'a'
+        assert_eq!(s.col, 3);
         key(&mut s, ';');
-        // no more 'a' after col 3, so stays
         assert_eq!(s.col, 3);
     }
 
@@ -2135,16 +934,14 @@ mod tests {
     fn motion_comma_reverses_find() {
         let mut s = ed("abcabc");
         s.col = 4;
-        keys(&mut s, "fa"); // no 'a' after col 4... wait, col 5 is 'b', col 4 is 'b'
-        // Actually "abcabc" -> indices: a=0, b=1, c=2, a=3, b=4, c=5
-        // fa from col 4 looks for 'a' after col 4 -> none found
+        keys(&mut s, "fa");
     }
 
     #[test]
     fn motion_f_not_found_stays() {
         let mut s = ed("hello");
         keys(&mut s, "fz");
-        assert_eq!(s.col, 0); // 'z' not found, cursor stays
+        assert_eq!(s.col, 0);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2183,7 +980,7 @@ mod tests {
         let mut s = ed("hello");
         key(&mut s, 'A');
         assert_eq!(s.mode, Mode::Insert);
-        assert_eq!(s.col, 5); // after last char
+        assert_eq!(s.col, 5);
     }
 
     #[test]
@@ -2302,10 +1099,10 @@ mod tests {
     #[test]
     fn esc_from_insert_moves_cursor_left() {
         let mut s = ed("hello");
-        key(&mut s, 'a'); // col becomes 1
+        key(&mut s, 'a');
         s.col = 3;
         esc(&mut s);
-        assert_eq!(s.col, 2); // moved left by 1
+        assert_eq!(s.col, 2);
     }
 
     #[test]
@@ -2318,12 +1115,10 @@ mod tests {
 
     #[test]
     fn esc_from_insert_updates_col_want() {
-        // KNOWN BUG: col_want is not updated on insert mode exit
         let mut s = ed("hello\nworld\nfoo");
         key(&mut s, 'i');
         s.col = 3;
         esc(&mut s);
-        // col should be 2 (moved left), col_want should also be 2
         assert_eq!(s.col, 2);
         assert_eq!(
             s.col_want, 2,
@@ -2355,7 +1150,7 @@ mod tests {
         let mut s = ed("hello");
         s.col = 1;
         key(&mut s, 'x');
-        assert_eq!(s.registers.get(&'"'), Some(&"e".to_string()));
+        assert_eq!(s.registers.map.get(&'"'), Some(&"e".to_string()));
     }
 
     #[test]
@@ -2414,7 +1209,7 @@ mod tests {
     fn dd_yanks_line_with_newline() {
         let mut s = ed("aaa\nbbb");
         keys(&mut s, "dd");
-        assert_eq!(s.registers.get(&'"'), Some(&"aaa\n".to_string()));
+        assert_eq!(s.registers.map.get(&'"'), Some(&"aaa\n".to_string()));
     }
 
     #[test]
@@ -2432,7 +1227,6 @@ mod tests {
     fn d_w_deletes_word() {
         let mut s = ed("hello world");
         keys(&mut s, "dw");
-        // dw from col 0 deletes "hello " -> "world"
         assert_eq!(s.buf.line(0), "world");
     }
 
@@ -2457,7 +1251,6 @@ mod tests {
     fn d_e_deletes_to_end_of_word() {
         let mut s = ed("hello world");
         keys(&mut s, "de");
-        // de deletes to end of word including last char
         assert_eq!(s.buf.line(0), " world");
     }
 
@@ -2465,7 +1258,6 @@ mod tests {
     fn d_f_deletes_to_found_char() {
         let mut s = ed("hello world");
         keys(&mut s, "df ");
-        // df<space> deletes up to and including the space
         assert_eq!(s.buf.line(0), "world");
     }
 
@@ -2476,7 +1268,6 @@ mod tests {
         s.col = 0;
         s.col_want = 0;
         keys(&mut s, "dgg");
-        // Should delete from current line up to first line
         assert_eq!(s.buf.line_count(), 1);
     }
 
@@ -2495,12 +1286,9 @@ mod tests {
 
     #[test]
     fn cc_with_count_should_clear_multiple_lines() {
-        // KNOWN BUG: cc doesn't support count
         let mut s = ed("aaa\nbbb\nccc\nddd");
         keys(&mut s, "3cc");
         assert_eq!(s.mode, Mode::Insert);
-        // In vim, 3cc clears lines 0,1,2 and leaves cursor on a blank line
-        // The buffer should have only "ddd" remaining plus the blank line
         assert_eq!(s.buf.line(0), "", "cc with count should clear current line");
         assert_eq!(
             s.buf.line_count(),
@@ -2514,7 +1302,6 @@ mod tests {
         let mut s = ed("hello world");
         keys(&mut s, "cw");
         assert_eq!(s.mode, Mode::Insert);
-        // cw deletes from cursor to start of next word, enters insert
     }
 
     #[test]
@@ -2534,23 +1321,22 @@ mod tests {
     fn yy_yanks_line() {
         let mut s = ed("hello\nworld");
         keys(&mut s, "yy");
-        assert_eq!(s.registers.get(&'"'), Some(&"hello\n".to_string()));
-        assert_eq!(s.buf.to_text(), "hello\nworld"); // buffer unchanged
+        assert_eq!(s.registers.map.get(&'"'), Some(&"hello\n".to_string()));
+        assert_eq!(s.buf.to_text(), "hello\nworld");
     }
 
     #[test]
     fn yy_with_count() {
         let mut s = ed("aaa\nbbb\nccc");
         keys(&mut s, "2yy");
-        assert_eq!(s.registers.get(&'"'), Some(&"aaa\nbbb\n".to_string()));
+        assert_eq!(s.registers.map.get(&'"'), Some(&"aaa\nbbb\n".to_string()));
     }
 
     #[test]
     fn y_w_yanks_word() {
         let mut s = ed("hello world");
         keys(&mut s, "yw");
-        // yw yanks from cursor to start of next word
-        let yanked = s.registers.get(&'"').cloned().unwrap_or_default();
+        let yanked = s.registers.map.get(&'"').cloned().unwrap_or_default();
         assert!(yanked.starts_with("hello"), "yw should yank 'hello' area");
     }
 
@@ -2561,8 +1347,8 @@ mod tests {
     #[test]
     fn p_paste_linewise_after() {
         let mut s = ed("aaa\nbbb\nccc");
-        keys(&mut s, "dd"); // yank "aaa\n"
-        key(&mut s, 'p'); // paste after current line
+        keys(&mut s, "dd");
+        key(&mut s, 'p');
         assert_eq!(s.buf.line(0), "bbb");
         assert_eq!(s.buf.line(1), "aaa");
         assert_eq!(s.buf.line(2), "ccc");
@@ -2571,8 +1357,8 @@ mod tests {
     #[test]
     fn capital_p_paste_linewise_before() {
         let mut s = ed("aaa\nbbb\nccc");
-        keys(&mut s, "dd"); // yank "aaa\n", now on "bbb"
-        key(&mut s, 'P'); // paste before
+        keys(&mut s, "dd");
+        key(&mut s, 'P');
         assert_eq!(s.buf.line(0), "aaa");
         assert_eq!(s.buf.line(1), "bbb");
     }
@@ -2580,24 +1366,18 @@ mod tests {
     #[test]
     fn p_paste_charwise_after() {
         let mut s = ed("hllo");
-        s.registers.insert('"', "e".to_string());
+        s.registers.map.insert('"', "e".to_string());
         s.col = 0;
         key(&mut s, 'p');
-        // p pastes after cursor, so "e" goes after 'h' -> "hello" wait no
-        // actually insert at col+1, so "hllo" with 'e' at pos 1 -> "hello"
         assert_eq!(s.buf.line(0), "hello");
     }
 
     #[test]
     fn p_paste_with_count_single_undo() {
-        // KNOWN BUG: paste with count pushes multiple undo states
         let mut s = ed("hello");
-        s.registers.insert('"', "x".to_string());
+        s.registers.map.insert('"', "x".to_string());
         keys(&mut s, "3p");
-        assert_eq!(s.buf.line(0), "hxxx ello".replace(" ", "")); // should be "hxxxello"
-        // Actually p pastes after cursor, and with count 3 it pastes "x" three times
-        // After first paste: "hxello", after second: "hxxello", after third: "hxxxello"
-        // Now undo once should revert ALL three pastes
+        assert_eq!(s.buf.line(0), "hxxxello");
         key(&mut s, 'u');
         assert_eq!(
             s.buf.line(0),
@@ -2612,25 +1392,14 @@ mod tests {
 
     #[test]
     fn count_before_operator_3dw() {
-        // Test 3dw - should delete 3 words. But count before operator
-        // goes into count_buf, then 'd' sets operator, then 'w' is motion
-        // and count_buf still has '3'.
         let mut s = ed("one two three four");
-        // In this implementation, 3dw means count=3 applied to 'd' operator with 'w' motion
-        // Actually since '3' is parsed before 'd', and 'd' sets operator,
-        // then 'w' triggers with count=3 from count_buf
         keys(&mut s, "3dw");
-        // Should delete "one two three " leaving "four"
-        // But actually count_buf is cleared when operator is set... let's verify
     }
 
     #[test]
     fn operator_count_d3w() {
-        // KNOWN BUG: d3w doesn't work because count after operator is ignored
         let mut s = ed("one two three four");
         keys(&mut s, "d3w");
-        // Should delete 3 words: "one two three " -> "four"
-        // But since count digits require operator.is_none(), '3' after 'd' is not parsed
         assert_eq!(s.buf.line(0), "four", "d3w should delete 3 words");
     }
 
@@ -2660,10 +1429,10 @@ mod tests {
     #[test]
     fn undo_with_count() {
         let mut s = ed("aaa\nbbb\nccc");
-        keys(&mut s, "dd"); // delete "aaa"
-        keys(&mut s, "dd"); // delete "bbb"
+        keys(&mut s, "dd");
+        keys(&mut s, "dd");
         assert_eq!(s.buf.to_text(), "ccc");
-        keys(&mut s, "2u"); // undo twice
+        keys(&mut s, "2u");
         assert_eq!(s.buf.to_text(), "aaa\nbbb\nccc");
     }
 
@@ -2684,10 +1453,10 @@ mod tests {
     #[test]
     fn undo_clears_redo_on_new_change() {
         let mut s = ed("hello\nworld");
-        keys(&mut s, "dd"); // delete "hello"
-        key(&mut s, 'u'); // undo
-        keys(&mut s, "dd"); // new change - should clear redo
-        ctrl(&mut s, 'r'); // redo should have nothing
+        keys(&mut s, "dd");
+        key(&mut s, 'u');
+        keys(&mut s, "dd");
+        ctrl(&mut s, 'r');
         assert_eq!(s.message, "Already at newest change");
     }
 
@@ -2715,7 +1484,7 @@ mod tests {
     fn visual_d_deletes_selection() {
         let mut s = ed("hello world");
         key(&mut s, 'v');
-        keys(&mut s, "llll"); // select "hello"
+        keys(&mut s, "llll");
         key(&mut s, 'd');
         assert_eq!(s.mode, Mode::Normal);
         assert_eq!(s.buf.line(0), " world");
@@ -2725,12 +1494,12 @@ mod tests {
     fn visual_y_yanks_selection() {
         let mut s = ed("hello world");
         key(&mut s, 'v');
-        keys(&mut s, "llll"); // select "hello"
+        keys(&mut s, "llll");
         key(&mut s, 'y');
         assert_eq!(s.mode, Mode::Normal);
-        let yanked = s.registers.get(&'"').cloned().unwrap_or_default();
+        let yanked = s.registers.map.get(&'"').cloned().unwrap_or_default();
         assert_eq!(yanked, "hello");
-        assert_eq!(s.buf.to_text(), "hello world"); // unchanged
+        assert_eq!(s.buf.to_text(), "hello world");
     }
 
     #[test]
@@ -2747,7 +1516,7 @@ mod tests {
     fn visual_motions_extend_selection() {
         let mut s = ed("hello\nworld");
         key(&mut s, 'v');
-        key(&mut s, 'j'); // extend to next line
+        key(&mut s, 'j');
         assert_eq!(s.row, 1);
         assert_eq!(s.mode, Mode::Visual);
     }
@@ -2783,8 +1552,6 @@ mod tests {
     fn join_lines_basic() {
         let mut s = ed("hello\nworld");
         key(&mut s, 'J');
-        // KNOWN BUG: J doesn't add space
-        // Vim joins with a space: "hello world"
         assert_eq!(
             s.buf.line(0),
             "hello world",
@@ -2796,7 +1563,6 @@ mod tests {
     fn join_lines_preserves_indent() {
         let mut s = ed("hello\n    world");
         key(&mut s, 'J');
-        // Vim strips leading whitespace from next line and adds a single space
         assert_eq!(
             s.buf.line(0),
             "hello world",
@@ -2815,8 +1581,6 @@ mod tests {
     fn join_lines_with_count() {
         let mut s = ed("a\nb\nc\nd");
         keys(&mut s, "3J");
-        // Vim: 3J joins next 2 lines with current = "a b c"
-        // Note: count for J is number of lines to join total
         assert_eq!(s.buf.line_count(), 2);
     }
 
@@ -2829,7 +1593,7 @@ mod tests {
         let mut s = ed("hello");
         key(&mut s, '~');
         assert_eq!(s.buf.line(0), "Hello");
-        assert_eq!(s.col, 1); // cursor advances
+        assert_eq!(s.col, 1);
     }
 
     #[test]
@@ -2868,7 +1632,7 @@ mod tests {
     fn dedent_partial() {
         let mut s = ed("  hello");
         keys(&mut s, "<<");
-        assert_eq!(s.buf.line(0), "hello"); // only 2 spaces to remove
+        assert_eq!(s.buf.line(0), "hello");
     }
 
     #[test]
@@ -2877,7 +1641,7 @@ mod tests {
         keys(&mut s, "2>>");
         assert_eq!(s.buf.line(0), "    aaa");
         assert_eq!(s.buf.line(1), "    bbb");
-        assert_eq!(s.buf.line(2), "ccc"); // unaffected
+        assert_eq!(s.buf.line(2), "ccc");
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -2894,7 +1658,7 @@ mod tests {
         }
         enter(&mut s);
         assert_eq!(s.mode, Mode::Normal);
-        assert_eq!(s.col, 6); // start of "world"
+        assert_eq!(s.col, 6);
     }
 
     #[test]
@@ -2907,7 +1671,7 @@ mod tests {
             handle_key(&mut s, KeyCode::Char(c), false);
         }
         enter(&mut s);
-        assert_eq!(s.col, 0); // first "hello"
+        assert_eq!(s.col, 0);
     }
 
     #[test]
@@ -2918,22 +1682,21 @@ mod tests {
             handle_key(&mut s, KeyCode::Char(c), false);
         }
         enter(&mut s);
-        assert_eq!(s.col, 4); // first "bbb"
+        assert_eq!(s.col, 4);
         key(&mut s, 'n');
-        assert_eq!(s.col, 12); // second "bbb"
+        assert_eq!(s.col, 12);
     }
 
     #[test]
     fn search_capital_n_reverses_direction() {
         let mut s = ed("aaa bbb aaa bbb");
-        s.col = 12; // at second "bbb"
+        s.col = 12;
         key(&mut s, '/');
         for c in "aaa".chars() {
             handle_key(&mut s, KeyCode::Char(c), false);
         }
-        enter(&mut s); // wraps to first "aaa"
-        key(&mut s, 'N'); // reverse search direction
-        // N searches backward from current pos
+        enter(&mut s);
+        key(&mut s, 'N');
     }
 
     #[test]
@@ -2954,7 +1717,7 @@ mod tests {
         handle_key(&mut s, KeyCode::Char('x'), false);
         esc(&mut s);
         assert_eq!(s.mode, Mode::Normal);
-        assert_eq!(s.col, 0); // cursor unchanged
+        assert_eq!(s.col, 0);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -3016,7 +1779,7 @@ mod tests {
         key(&mut s, ':');
         handle_key(&mut s, KeyCode::Char('3'), false);
         handle_key(&mut s, KeyCode::Enter, false);
-        assert_eq!(s.row, 2); // line 3 = index 2
+        assert_eq!(s.row, 2);
     }
 
     #[test]
@@ -3045,7 +1808,7 @@ mod tests {
         let mut s = ed(&"line\n".repeat(50));
         s.view_height = 20;
         ctrl(&mut s, 'd');
-        assert_eq!(s.row, 10); // half of 20
+        assert_eq!(s.row, 10);
     }
 
     #[test]
@@ -3100,8 +1863,6 @@ mod tests {
         let mut s = ed("hello");
         s.filename = "/tmp/rivas_test_zz_save".to_string();
         keys(&mut s, "ZZ");
-        // ZZ should have returned true (quit) - but we used keys() which
-        // doesn't propagate the return. Let's test directly:
         let mut s2 = ed("hello");
         s2.filename = "/tmp/rivas_test_zz_save2".to_string();
         key(&mut s2, 'Z');
@@ -3125,8 +1886,6 @@ mod tests {
     fn d_j_deletes_two_lines() {
         let mut s = ed("aaa\nbbb\nccc");
         keys(&mut s, "dj");
-        // dj should delete current line and next line
-        // Remaining: "ccc"
         assert_eq!(s.buf.line_count(), 1);
         assert_eq!(s.buf.line(0), "ccc");
     }
@@ -3137,7 +1896,6 @@ mod tests {
         s.row = 1;
         s.col_want = 0;
         keys(&mut s, "dk");
-        // dk should delete current and previous line
         assert_eq!(s.buf.line_count(), 1);
         assert_eq!(s.buf.line(0), "ccc");
     }
@@ -3146,21 +1904,17 @@ mod tests {
     fn d_g_deletes_to_last_line() {
         let mut s = ed("aaa\nbbb\nccc");
         keys(&mut s, "dG");
-        // dG from first line deletes everything
         assert_eq!(s.buf.line_count(), 1);
         assert_eq!(s.buf.line(0), "");
     }
 
     #[test]
     fn operator_across_all_lines_no_stray_line() {
-        // KNOWN BUG: execute_operator multi-line delete can leave stray empty line
         let mut s = ed("aaa\nbbb");
-        // Select from start to end and delete
         key(&mut s, 'v');
         key(&mut s, 'j');
         keys(&mut s, "$");
         key(&mut s, 'd');
-        // Should result in a single empty line (empty buffer)
         assert_eq!(
             s.buf.line_count(),
             1,
@@ -3187,7 +1941,7 @@ mod tests {
     fn single_char_buffer() {
         let mut s = ed("a");
         key(&mut s, 'l');
-        assert_eq!(s.col, 0); // can't go right, only 1 char
+        assert_eq!(s.col, 0);
         key(&mut s, 'x');
         assert_eq!(s.buf.line(0), "");
     }
@@ -3204,134 +1958,12 @@ mod tests {
     }
 
     #[test]
-    fn mode_labels() {
-        assert_eq!(Mode::Normal.label(), "NORMAL");
-        assert_eq!(Mode::Insert.label(), "INSERT");
-        assert_eq!(Mode::Visual.label(), "VISUAL");
-        assert_eq!(Mode::Command.label(), "COMMAND");
-        assert_eq!((Mode::Search { forward: true }).label(), "SEARCH↓");
-        assert_eq!((Mode::Search { forward: false }).label(), "SEARCH↑");
-    }
-
-    #[test]
     fn initial_state() {
         let s = ed("hello\nworld");
         assert_eq!(s.row, 0);
         assert_eq!(s.col, 0);
         assert_eq!(s.mode, Mode::Normal);
         assert_eq!(s.modified, false);
-    }
-
-    #[test]
-    fn replace_range_on_line() {
-        let mut b = Buffer::new("hello world");
-        b.replace_range_on_line(0, 6, 11, "rust");
-        assert_eq!(b.lines[0], "hello rust");
-    }
-
-    #[test]
-    fn insert_text_single_line() {
-        let mut b = Buffer::new("hd");
-        let (r, c) = b.insert_text(0, 1, "ello worl");
-        assert_eq!(b.lines[0], "hello world");
-        assert_eq!(r, 0);
-    }
-
-    #[test]
-    fn insert_text_multi_line() {
-        let mut b = Buffer::new("hello");
-        let (r, c) = b.insert_text(0, 5, "\nworld\nfoo");
-        assert_eq!(b.line_count(), 3);
-        assert_eq!(b.line(0), "hello");
-        assert_eq!(b.line(1), "world");
-        assert_eq!(b.line(2), "foo");
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // Buffer Search Tests
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn search_forward_finds_first_match() {
-        let b = Buffer::new("hello world hello");
-        let result = b.search_forward("hello", 0, 0);
-        // Should find second "hello" (skips current position)
-        assert!(result.is_some());
-        let (r, c) = result.unwrap();
-        assert_eq!(r, 0);
-        assert_eq!(c, 12);
-    }
-
-    #[test]
-    fn search_forward_wraps_around() {
-        let b = Buffer::new("hello\nworld\nfoo");
-        let result = b.search_forward("hello", 2, 0);
-        assert!(result.is_some());
-        let (r, c) = result.unwrap();
-        assert_eq!(r, 0);
-        assert_eq!(c, 0);
-    }
-
-    #[test]
-    fn search_backward_finds_match() {
-        let b = Buffer::new("hello world hello");
-        let result = b.search_backward("hello", 0, 12);
-        assert!(result.is_some());
-        let (r, c) = result.unwrap();
-        assert_eq!(r, 0);
-        assert_eq!(c, 0);
-    }
-
-    #[test]
-    fn search_empty_pattern_returns_none() {
-        let b = Buffer::new("hello");
-        assert!(b.search_forward("", 0, 0).is_none());
-        assert!(b.search_backward("", 0, 0).is_none());
-    }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // Buffer Word Navigation Tests
-    // ═════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn word_forward_basic() {
-        let b = Buffer::new("hello world");
-        let (r, c) = b.word_forward(0, 0);
-        assert_eq!((r, c), (0, 6));
-    }
-
-    #[test]
-    fn word_backward_basic() {
-        let b = Buffer::new("hello world");
-        let (r, c) = b.word_backward(0, 8);
-        assert_eq!((r, c), (0, 6));
-    }
-
-    #[test]
-    fn word_end_basic() {
-        let b = Buffer::new("hello world");
-        let (r, c) = b.word_end(0, 0);
-        assert_eq!((r, c), (0, 4));
-    }
-
-    #[test]
-    fn find_forward_basic() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.find_forward(0, 0, 'l', false), Some(2));
-        assert_eq!(b.find_forward(0, 0, 'l', true), Some(1)); // before 'l'
-    }
-
-    #[test]
-    fn find_backward_basic() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.find_backward(0, 4, 'l', false), Some(3));
-        assert_eq!(b.find_backward(0, 4, 'l', true), Some(4)); // after 'l' (min with len-1)
-    }
-
-    #[test]
-    fn find_forward_not_found() {
-        let b = Buffer::new("hello");
-        assert_eq!(b.find_forward(0, 0, 'z', false), None);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -3344,7 +1976,7 @@ mod tests {
         s.col = 6;
         s.col_want = 6;
         keys(&mut s, "y$");
-        let yanked = s.registers.get(&'"').cloned().unwrap_or_default();
+        let yanked = s.registers.map.get(&'"').cloned().unwrap_or_default();
         assert_eq!(yanked, "world");
     }
 
@@ -3404,7 +2036,7 @@ mod tests {
         let mut s = ed("hello");
         key(&mut s, 'i');
         arrow(&mut s, KeyCode::End);
-        assert_eq!(s.col, 5); // in insert mode, can be at len
+        assert_eq!(s.col, 5);
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -3448,7 +2080,7 @@ mod tests {
         let mut s = ed("hello\nworld");
         s.row = 1;
         s.col = 0;
-        assert_eq!(s.absolute_byte_offset(), 6); // "hello\n" = 6 bytes
+        assert_eq!(s.absolute_byte_offset(), 6);
     }
 
     #[test]
@@ -3456,6 +2088,766 @@ mod tests {
         let mut s = ed("hello\nworld");
         s.row = 1;
         s.col = 3;
-        assert_eq!(s.absolute_byte_offset(), 9); // 6 + 3
+        assert_eq!(s.absolute_byte_offset(), 9);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    // 31. Multi-byte Unicode Characters
+    // ═════════════════════════════════════════════════════════════════════
+
+    // -- Buffer basics with Unicode --
+
+    #[test]
+    fn unicode_buffer_new_and_line_count() {
+        let b = Buffer::new("α β γ");
+        assert_eq!(b.line_count(), 1);
+        assert_eq!(b.char_count(0), 5);
+    }
+
+    #[test]
+    fn unicode_buffer_multiline() {
+        let b = Buffer::new("中\n文\n字");
+        assert_eq!(b.line_count(), 3);
+        assert_eq!(b.char_count(0), 1);
+    }
+
+    #[test]
+    fn unicode_buffer_to_text_roundtrip() {
+        let text = "hello 🌍\nα β γ\n中文字";
+        let b = Buffer::new(text);
+        assert_eq!(b.to_text(), text);
+    }
+
+    #[test]
+    fn unicode_byte_offset_cjk() {
+        // "中" is 3 bytes, "文" is 3 bytes
+        let b = Buffer::new("中文字");
+        assert_eq!(b.byte_offset(0, 0), 0);
+        assert_eq!(b.byte_offset(0, 1), 3);
+        assert_eq!(b.byte_offset(0, 2), 6);
+        assert_eq!(b.byte_offset(0, 3), 9);
+    }
+
+    #[test]
+    fn unicode_byte_offset_emoji() {
+        // "🌍" is 4 bytes
+        let b = Buffer::new("🌍🌎🌏");
+        assert_eq!(b.byte_offset(0, 0), 0);
+        assert_eq!(b.byte_offset(0, 1), 4);
+        assert_eq!(b.byte_offset(0, 2), 8);
+    }
+
+    #[test]
+    fn unicode_byte_offset_latin_extended() {
+        // "é" is 2 bytes, "ñ" is 2 bytes
+        let b = Buffer::new("éñü");
+        assert_eq!(b.byte_offset(0, 0), 0);
+        assert_eq!(b.byte_offset(0, 1), 2);
+        assert_eq!(b.byte_offset(0, 2), 4);
+    }
+
+    #[test]
+    fn unicode_byte_offset_mixed() {
+        // "a中b" = 1 + 3 + 1 = 5 bytes, 3 chars
+        let b = Buffer::new("a中b");
+        assert_eq!(b.byte_offset(0, 0), 0);
+        assert_eq!(b.byte_offset(0, 1), 1); // before '中'
+        assert_eq!(b.byte_offset(0, 2), 4); // after '中', before 'b'
+        assert_eq!(b.byte_offset(0, 3), 5); // past end
+    }
+
+    #[test]
+    fn unicode_insert_char() {
+        let mut b = Buffer::new("中文字");
+        b.insert_char(0, 1, '★');
+        assert_eq!(b.line(0), "中★文字");
+        assert_eq!(b.char_count(0), 4);
+    }
+
+    #[test]
+    fn unicode_delete_char() {
+        let mut b = Buffer::new("αβγ");
+        let ch = b.delete_char(0, 1);
+        assert_eq!(ch, Some('β'));
+        assert_eq!(b.line(0), "αγ");
+    }
+
+    #[test]
+    fn unicode_split_line() {
+        let mut b = Buffer::new("中文字");
+        b.split_line(0, 2);
+        assert_eq!(b.line(0), "中文");
+        assert_eq!(b.line(1), "字");
+    }
+
+    #[test]
+    fn unicode_buffer_join_lines() {
+        let mut b = Buffer::new("中\n文");
+        b.join_lines(0);
+        assert_eq!(b.line(0), "中文");
+    }
+
+    #[test]
+    fn unicode_replace_range_on_line() {
+        let mut b = Buffer::new("αβγδ");
+        b.replace_range_on_line(0, 1, 3, "XY");
+        assert_eq!(b.line(0), "αXYδ");
+    }
+
+    #[test]
+    fn unicode_insert_text_single_line() {
+        let mut b = Buffer::new("αγ");
+        let (r, c) = b.insert_text(0, 1, "β");
+        assert_eq!(b.line(0), "αβγ");
+        assert_eq!(r, 0);
+        // insert_text returns cursor ON last inserted char (saturating_sub(1))
+        assert_eq!(c, 1);
+    }
+
+    #[test]
+    fn unicode_insert_text_multiline() {
+        let mut b = Buffer::new("α");
+        let (_r, _c) = b.insert_text(0, 1, "\nβ\nγ");
+        assert_eq!(b.line_count(), 3);
+        assert_eq!(b.line(0), "α");
+        assert_eq!(b.line(1), "β");
+        assert_eq!(b.line(2), "γ");
+    }
+
+    // -- Clamp with Unicode --
+
+    #[test]
+    fn unicode_clamp_col_normal() {
+        let b = Buffer::new("αβγ");
+        assert_eq!(b.clamp_col(0, 10, false), 2); // last valid char index
+        assert_eq!(b.clamp_col(0, 1, false), 1);
+    }
+
+    #[test]
+    fn unicode_clamp_col_insert() {
+        let b = Buffer::new("αβγ");
+        assert_eq!(b.clamp_col(0, 10, true), 3); // can be at len
+    }
+
+    // -- Word motions with Unicode --
+
+    #[test]
+    fn unicode_word_forward() {
+        let b = Buffer::new("αβ γδ");
+        let (r, c) = b.word_forward(0, 0);
+        assert_eq!((r, c), (0, 3)); // skip αβ, land on γ
+    }
+
+    #[test]
+    fn unicode_word_backward() {
+        let b = Buffer::new("αβ γδ");
+        let (r, c) = b.word_backward(0, 4);
+        assert_eq!((r, c), (0, 3)); // start of "γδ"
+    }
+
+    #[test]
+    fn unicode_word_end() {
+        let b = Buffer::new("αβ γδ");
+        let (r, c) = b.word_end(0, 0);
+        assert_eq!((r, c), (0, 1)); // end of "αβ"
+    }
+
+    // -- Search with Unicode --
+
+    #[test]
+    fn unicode_search_forward() {
+        let b = Buffer::new("hello 中文 world 中文 end");
+        let result = b.search_forward("中文", 0, 0);
+        assert!(result.is_some());
+        let (r, c) = result.unwrap();
+        assert_eq!(r, 0);
+        assert_eq!(c, 6); // "hello " = 6 chars, then "中文"
+    }
+
+    #[test]
+    fn unicode_buffer_search_backward() {
+        let b = Buffer::new("α β γ β α");
+        // β at cols 2 and 6; searching backward from col 8 finds col 6
+        let result = b.search_backward("β", 0, 8);
+        assert!(result.is_some());
+        let (r, c) = result.unwrap();
+        assert_eq!(c, 6);
+    }
+
+    #[test]
+    fn unicode_find_forward() {
+        let b = Buffer::new("αβγδ");
+        assert_eq!(b.find_forward(0, 0, 'γ', false), Some(2));
+        assert_eq!(b.find_forward(0, 0, 'γ', true), Some(1));
+    }
+
+    #[test]
+    fn unicode_find_backward() {
+        let b = Buffer::new("αβγδ");
+        assert_eq!(b.find_backward(0, 3, 'β', false), Some(1));
+    }
+
+    // -- EditorState motions with Unicode --
+
+    #[test]
+    fn unicode_motion_l_moves_right() {
+        let mut s = ed("中文字");
+        key(&mut s, 'l');
+        assert_eq!(s.col, 1);
+        key(&mut s, 'l');
+        assert_eq!(s.col, 2);
+    }
+
+    #[test]
+    fn unicode_motion_h_moves_left() {
+        let mut s = ed("中文字");
+        s.col = 2;
+        key(&mut s, 'h');
+        assert_eq!(s.col, 1);
+    }
+
+    #[test]
+    fn unicode_motion_dollar_goes_to_end() {
+        let mut s = ed("αβγ");
+        key(&mut s, '$');
+        assert_eq!(s.col, 2); // last char index (3 chars, last is 2)
+    }
+
+    #[test]
+    fn unicode_motion_zero_goes_to_start() {
+        let mut s = ed("中文字");
+        s.col = 2;
+        key(&mut s, '0');
+        assert_eq!(s.col, 0);
+    }
+
+    #[test]
+    fn unicode_motion_caret_first_non_blank() {
+        let mut s = ed("   中文");
+        key(&mut s, '^');
+        assert_eq!(s.col, 3);
+    }
+
+    #[test]
+    fn unicode_motion_w_basic() {
+        let mut s = ed("中文 abc");
+        key(&mut s, 'w');
+        assert_eq!(s.col, 3); // 'a' in "abc"
+    }
+
+    #[test]
+    fn unicode_motion_b_basic() {
+        let mut s = ed("abc 中文");
+        s.col = 5;
+        key(&mut s, 'b');
+        assert_eq!(s.col, 4); // start of "中文"
+    }
+
+    #[test]
+    fn unicode_motion_e_basic() {
+        let mut s = ed("中文 abc");
+        key(&mut s, 'e');
+        assert_eq!(s.col, 1); // end of "中文" -> '文' at col 1
+    }
+
+    #[test]
+    fn unicode_j_k_vertical() {
+        let mut s = ed("中文\nαβ\nγδ");
+        key(&mut s, 'j');
+        assert_eq!(s.row, 1);
+        assert_eq!(s.col, 0);
+        key(&mut s, 'j');
+        assert_eq!(s.row, 2);
+        key(&mut s, 'k');
+        assert_eq!(s.row, 1);
+    }
+
+    #[test]
+    fn unicode_j_clamps_col() {
+        let mut s = ed("中文字\nα");
+        s.col = 2;
+        s.col_want = 2;
+        key(&mut s, 'j');
+        assert_eq!(s.row, 1);
+        assert_eq!(s.col, 0); // α only has 1 char
+    }
+
+    #[test]
+    fn unicode_count_motion() {
+        let mut s = ed("α β γ δ ε");
+        keys(&mut s, "2l");
+        assert_eq!(s.col, 2);
+    }
+
+    // -- Insert mode with Unicode --
+
+    #[test]
+    fn unicode_insert_char_typing() {
+        let mut s = ed("");
+        key(&mut s, 'i');
+        handle_key(&mut s, KeyCode::Char('中'), false);
+        handle_key(&mut s, KeyCode::Char('文'), false);
+        assert_eq!(s.buf.line(0), "中文");
+        assert_eq!(s.col, 2); // 2 chars
+    }
+
+    #[test]
+    fn unicode_insert_emoji() {
+        let mut s = ed("");
+        key(&mut s, 'i');
+        handle_key(&mut s, KeyCode::Char('🎉'), false);
+        assert_eq!(s.buf.line(0), "🎉");
+        assert_eq!(s.col, 1); // 1 char (even though 4 bytes)
+    }
+
+    #[test]
+    fn unicode_backspace() {
+        let mut s = ed("αβγ");
+        key(&mut s, 'i');
+        s.col = 2;
+        backspace(&mut s);
+        assert_eq!(s.buf.line(0), "αγ");
+        assert_eq!(s.col, 1);
+    }
+
+    #[test]
+    fn unicode_backspace_join_lines() {
+        let mut s = ed("中文\nαβ");
+        key(&mut s, 'i');
+        s.row = 1;
+        s.col = 0;
+        backspace(&mut s);
+        assert_eq!(s.buf.line_count(), 1);
+        assert_eq!(s.buf.line(0), "中文αβ");
+        assert_eq!(s.col, 2); // cursor after '中文'
+    }
+
+    #[test]
+    fn unicode_delete_key() {
+        let mut s = ed("αβγ");
+        key(&mut s, 'i');
+        s.col = 0;
+        delete_key(&mut s);
+        assert_eq!(s.buf.line(0), "βγ");
+        assert_eq!(s.col, 0);
+    }
+
+    #[test]
+    fn unicode_enter_splits() {
+        let mut s = ed("中文");
+        key(&mut s, 'i');
+        s.col = 1;
+        enter(&mut s);
+        assert_eq!(s.buf.line(0), "中");
+        assert_eq!(s.buf.line(1), "文");
+        assert_eq!(s.row, 1);
+    }
+
+    #[test]
+    fn unicode_insert_mode_arrows() {
+        let mut s = ed("αβγ");
+        key(&mut s, 'i');
+        s.col = 1;
+        arrow(&mut s, KeyCode::Right);
+        assert_eq!(s.col, 2);
+        arrow(&mut s, KeyCode::Left);
+        assert_eq!(s.col, 1);
+    }
+
+    // -- Delete/paste/yank with Unicode --
+
+    #[test]
+    fn unicode_x_deletes() {
+        let mut s = ed("αβγ");
+        s.col = 1;
+        key(&mut s, 'x');
+        assert_eq!(s.buf.line(0), "αγ");
+        assert_eq!(s.col, 1);
+    }
+
+    #[test]
+    fn unicode_x_yanks() {
+        let mut s = ed("αβγ");
+        s.col = 1;
+        key(&mut s, 'x');
+        assert_eq!(s.registers.map.get(&'"'), Some(&"β".to_string()));
+    }
+
+    #[test]
+    fn unicode_X_deletes_back() {
+        let mut s = ed("αβγ");
+        s.col = 1;
+        key(&mut s, 'X');
+        assert_eq!(s.buf.line(0), "βγ");
+        assert_eq!(s.col, 0);
+    }
+
+    #[test]
+    fn unicode_dd_deletes_line() {
+        let mut s = ed("中文\nαβ");
+        keys(&mut s, "dd");
+        assert_eq!(s.buf.to_text(), "αβ");
+    }
+
+    #[test]
+    fn unicode_dd_yanks() {
+        let mut s = ed("中文\nαβ");
+        keys(&mut s, "dd");
+        assert_eq!(s.registers.map.get(&'"'), Some(&"中文\n".to_string()));
+    }
+
+    #[test]
+    fn unicode_paste_after_charwise() {
+        let mut s = ed("αγ");
+        s.registers.map.insert('"', "β".to_string());
+        s.col = 0;
+        key(&mut s, 'p');
+        // p pastes after cursor: α -> αβ, then γ stays
+        assert_eq!(s.buf.line(0), "αβγ");
+    }
+
+    #[test]
+    fn unicode_paste_before_charwise() {
+        let mut s = ed("βγ");
+        s.registers.map.insert('"', "α".to_string());
+        s.col = 0;
+        key(&mut s, 'P');
+        assert_eq!(s.buf.line(0), "αβγ");
+    }
+
+    #[test]
+    fn unicode_paste_linewise() {
+        let mut s = ed("α\nβ");
+        keys(&mut s, "dd"); // yank "α\n"
+        assert_eq!(s.buf.line(0), "β");
+        key(&mut s, 'p');
+        assert_eq!(s.buf.line(0), "β");
+        assert_eq!(s.buf.line(1), "α");
+        assert_eq!(s.buf.line_count(), 2);
+    }
+
+    #[test]
+    fn unicode_paste_count() {
+        let mut s = ed("x");
+        s.registers.map.insert('"', "中".to_string());
+        s.col = 0;
+        keys(&mut s, "3p");
+        assert_eq!(s.buf.line(0), "x中中中");
+    }
+
+    // -- Visual mode with Unicode --
+
+    #[test]
+    fn unicode_visual_select_and_delete() {
+        let mut s = ed("αβγδ");
+        key(&mut s, 'v');
+        keys(&mut s, "ll"); // select αβγ
+        key(&mut s, 'd');
+        assert_eq!(s.buf.line(0), "δ");
+    }
+
+    #[test]
+    fn unicode_visual_yank() {
+        let mut s = ed("中文abc");
+        key(&mut s, 'v');
+        keys(&mut s, "l"); // visual mode from col 0, l moves to col 1
+        // selection is inclusive: cols 0..=1 = "中文"
+        key(&mut s, 'y');
+        let yanked = s.registers.map.get(&'"').cloned().unwrap_or_default();
+        assert_eq!(yanked, "中文");
+        assert_eq!(s.buf.line(0), "中文abc"); // unchanged
+    }
+
+    // -- Replace with Unicode --
+
+    #[test]
+    fn unicode_replace_char() {
+        let mut s = ed("αβγ");
+        s.col = 1;
+        keys(&mut s, "r中");
+        assert_eq!(s.buf.line(0), "α中γ");
+        assert_eq!(s.mode, Mode::Normal);
+    }
+
+    // -- Case toggle with Unicode --
+
+    #[test]
+    fn unicode_tilde_greek() {
+        let mut s = ed("αβγ");
+        key(&mut s, '~');
+        assert_eq!(s.buf.line(0), "Αβγ");
+        assert_eq!(s.col, 1); // cursor advances
+        key(&mut s, '~');
+        assert_eq!(s.buf.line(0), "ΑΒγ");
+        assert_eq!(s.col, 2);
+        key(&mut s, '~');
+        assert_eq!(s.buf.line(0), "ΑΒΓ");
+    }
+
+    // -- Operator with Unicode --
+
+    #[test]
+    fn unicode_dw_deletes_word() {
+        let mut s = ed("中文 abc");
+        keys(&mut s, "dw");
+        assert_eq!(s.buf.line(0), "abc");
+    }
+
+    #[test]
+    fn unicode_dollar_delete_to_eol() {
+        let mut s = ed("αβγ");
+        key(&mut s, '$');
+        key(&mut s, 'd');
+        key(&mut s, '0');
+        // d$ from end of line, then 0 goes back
+        // Actually let's do it properly:
+    }
+
+    #[test]
+    fn unicode_d_dollar_to_eol() {
+        let mut s = ed("αβγδ");
+        key(&mut s, 'd');
+        key(&mut s, '$');
+        assert_eq!(s.buf.line(0), ""); // deleted from col 0 to end
+    }
+
+    #[test]
+    fn unicode_d0_to_start() {
+        let mut s = ed("αβγ");
+        s.col = 2;
+        key(&mut s, 'd');
+        key(&mut s, '0');
+        assert_eq!(s.buf.line(0), "γ");
+    }
+
+    #[test]
+    fn unicode_cw_changes_word() {
+        let mut s = ed("中文 abc");
+        keys(&mut s, "cw");
+        assert_eq!(s.mode, Mode::Insert);
+        // cw from col 0, w motion goes to col 3 (start of "abc")
+        // Exclusive delete removes chars 0..3 = "中文 ", leaving "abc"
+        assert_eq!(s.buf.line(0), "abc");
+    }
+
+    #[test]
+    fn unicode_indent_dedent() {
+        let mut s = ed("中文");
+        keys(&mut s, ">>");
+        assert_eq!(s.buf.line(0), "    中文");
+        keys(&mut s, "<<");
+        assert_eq!(s.buf.line(0), "中文");
+    }
+
+    #[test]
+    fn unicode_join_lines() {
+        let mut s = ed("中文\nαβ");
+        key(&mut s, 'J');
+        assert_eq!(s.buf.line(0), "中文 αβ");
+    }
+
+    // -- Undo/redo with Unicode --
+
+    #[test]
+    fn unicode_undo_insert() {
+        let mut s = ed("");
+        key(&mut s, 'i');
+        handle_key(&mut s, KeyCode::Char('中'), false);
+        handle_key(&mut s, KeyCode::Char('文'), false);
+        esc(&mut s);
+        assert_eq!(s.buf.line(0), "中文");
+        key(&mut s, 'u');
+        assert_eq!(s.buf.line(0), "");
+    }
+
+    #[test]
+    fn unicode_redo() {
+        let mut s = ed("");
+        key(&mut s, 'i');
+        handle_key(&mut s, KeyCode::Char('中'), false);
+        esc(&mut s);
+        key(&mut s, 'u');
+        assert_eq!(s.buf.line(0), "");
+        ctrl(&mut s, 'r');
+        assert_eq!(s.buf.line(0), "中");
+    }
+
+    // -- Search mode with Unicode --
+
+    #[test]
+    fn unicode_search_and_n() {
+        let mut s = ed("中文 αβ 中文 γδ 中文");
+        key(&mut s, '/');
+        for c in "中文".chars() {
+            handle_key(&mut s, KeyCode::Char(c), false);
+        }
+        enter(&mut s);
+        assert_eq!(s.mode, Mode::Normal);
+        assert_eq!(s.col, 6); // after "αβ "
+        key(&mut s, 'n');
+        assert_eq!(s.col, 12); // next "中文"
+    }
+
+    #[test]
+    fn unicode_search_backward() {
+        let mut s = ed("α β γ β α");
+        s.col = 8;
+        key(&mut s, '?');
+        handle_key(&mut s, KeyCode::Char('β'), false);
+        enter(&mut s);
+        // searching backward from col 8 finds the nearest β at col 6
+        assert_eq!(s.col, 6);
+    }
+
+    // -- Absolute byte offset with Unicode --
+
+    #[test]
+    fn unicode_absolute_byte_offset() {
+        let mut s = ed("αβ\n中文字");
+        // "αβ" = 4 bytes, "\n" = 1 byte, total 5
+        s.row = 1;
+        s.col = 2; // 3rd char '字', byte offset 6 from line start
+        // total = 4 + 1 + 6 = 11
+        assert_eq!(s.absolute_byte_offset(), 11);
+    }
+
+    #[test]
+    fn unicode_absolute_byte_offset_at() {
+        let s = ed("αβ\n中文字");
+        // "αβ" = 4 bytes
+        assert_eq!(s.absolute_byte_offset_at(1, 0), 5); // 4 + 1 (newline)
+    }
+
+    // -- G/gg with Unicode --
+
+    #[test]
+    fn unicode_g_goes_to_last() {
+        let mut s = ed("中文\nαβ\nγδ");
+        key(&mut s, 'G');
+        assert_eq!(s.row, 2);
+    }
+
+    #[test]
+    fn unicode_gg_goes_to_first() {
+        let mut s = ed("中文\nαβ\nγδ");
+        s.row = 2;
+        keys(&mut s, "gg");
+        assert_eq!(s.row, 0);
+    }
+
+    // -- Mixed ASCII and Unicode --
+
+    #[test]
+    fn unicode_mixed_ascii_buffer() {
+        let b = Buffer::new("abc中文def🌍");
+        assert_eq!(b.char_count(0), 9);
+        // bytes: a(1) b(1) c(1) 中(3) 文(3) d(1) e(1) f(1) 🌍(4) = 16
+        assert_eq!(b.line(0).len(), 16);
+    }
+
+    #[test]
+    fn unicode_mixed_insert_delete() {
+        let mut b = Buffer::new("a中b文c");
+        b.delete_char(0, 1); // delete '中'
+        assert_eq!(b.line(0), "ab文c");
+        assert_eq!(b.char_count(0), 4);
+    }
+
+    #[test]
+    fn unicode_mixed_word_motions() {
+        let b = Buffer::new("abc 中文 def");
+        let (r, c) = b.word_forward(0, 0);
+        assert_eq!((r, c), (0, 4)); // skip "abc ", land on '中'
+        let (r2, c2) = b.word_forward(0, c);
+        assert_eq!((r2, c2), (0, 7)); // skip "中文 ", land on 'd'
+    }
+
+    // -- Large multi-byte chars (4 bytes) --
+
+    #[test]
+    fn unicode_emoji_buffer_ops() {
+        let mut b = Buffer::new("🎉🎊🎈");
+        assert_eq!(b.char_count(0), 3);
+        b.insert_char(0, 1, '★');
+        assert_eq!(b.line(0), "🎉★🎊🎈");
+        let ch = b.delete_char(0, 0);
+        assert_eq!(ch, Some('🎉'));
+        assert_eq!(b.line(0), "★🎊🎈");
+    }
+
+    #[test]
+    fn unicode_emoji_word_motion() {
+        let b = Buffer::new("🎉 hello 🌍");
+        let (r, c) = b.word_forward(0, 0);
+        assert_eq!((r, c), (0, 2)); // skip emoji + space, land on 'h'
+    }
+
+    #[test]
+    fn unicode_emoji_search() {
+        let b = Buffer::new("hello 🌍 world 🌍 end");
+        let result = b.search_forward("🌍", 0, 0);
+        assert!(result.is_some());
+        let (r, c) = result.unwrap();
+        assert_eq!(r, 0);
+        assert_eq!(c, 6); // "hello " = 6 chars
+    }
+
+    // -- Paragraph motions with Unicode --
+
+    #[test]
+    fn unicode_paragraph_motions() {
+        let mut s = ed("中文\nαβ\n\nγδ");
+        key(&mut s, '}');
+        assert_eq!(s.row, 2, "close-brace should jump to blank line");
+        // { from blank line searches backward past non-blank lines to line 0
+        key(&mut s, '{');
+        assert_eq!(s.row, 0);
+    }
+
+    // -- Count parsing with Unicode content --
+
+    #[test]
+    fn unicode_count_with_j() {
+        let mut s = ed("α\nβ\nγ\nδ\nε");
+        keys(&mut s, "3j");
+        assert_eq!(s.row, 3);
+        assert_eq!(s.buf.line(3), "δ");
+    }
+
+    // -- Cursor position tracking with Unicode --
+
+    #[test]
+    fn unicode_insert_exit_cursor() {
+        let mut s = ed("αβγ");
+        key(&mut s, 'i');
+        s.col = 2;
+        esc(&mut s);
+        assert_eq!(s.col, 1); // moved left by 1 char
+        assert_eq!(s.col_want, 1);
+    }
+
+    #[test]
+    fn unicode_append_mode() {
+        let mut s = ed("αβγ");
+        s.col = 1;
+        key(&mut s, 'a');
+        assert_eq!(s.col, 2); // after 'β'
+        assert_eq!(s.mode, Mode::Insert);
+    }
+
+    #[test]
+    fn unicode_A_end_of_line() {
+        let mut s = ed("αβγ");
+        key(&mut s, 'A');
+        assert_eq!(s.col, 3); // after last char
+        assert_eq!(s.mode, Mode::Insert);
+    }
+
+    #[test]
+    fn unicode_I_first_non_blank() {
+        let mut s = ed("   αβγ");
+        key(&mut s, 'I');
+        assert_eq!(s.col, 3);
+        assert_eq!(s.mode, Mode::Insert);
     }
 }

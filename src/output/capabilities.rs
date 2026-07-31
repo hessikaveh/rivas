@@ -17,9 +17,12 @@ pub fn force_kitty() {
     HAS_KITTY.store(true, Ordering::Relaxed);
 }
 
+/// Terminal capability information detected at startup.
 #[derive(Clone, Debug)]
 pub struct TermCaps {
+    /// Width of a single cell in pixels (for Kitty image sizing).
     pub cell_w_px: u16,
+    /// Height of a single cell in pixels (for Kitty image sizing).
     pub cell_h_px: u16,
 }
 
@@ -33,6 +36,10 @@ impl Default for TermCaps {
 }
 
 impl TermCaps {
+    /// Detects terminal capabilities by querying the terminal for cell pixel size
+    /// and Kitty graphics support.
+    ///
+    /// Sets the global Kitty flag based on `$TERM`/`$TERM_PROGRAM` detection.
     pub fn detect() -> Result<Self> {
         let (cell_w_px, cell_h_px) = cell_pixel_size().unwrap_or((8, 16));
         let kitty = detect_kitty();

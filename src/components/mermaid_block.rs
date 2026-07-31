@@ -18,12 +18,16 @@ fn next_instance_id() -> u64 {
     INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Properties for the [`MermaidBlock`] component.
 #[derive(Default, Props)]
 pub struct MermaidBlockProps {
+    /// Mermaid diagram source code.
     pub source: String,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders a Mermaid diagram, using Kitty graphics if available, or text fallback.
 #[component]
 pub fn MermaidBlock(props: &MermaidBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     element! {
@@ -46,12 +50,19 @@ pub fn MermaidBlock(props: &MermaidBlockProps, _hooks: Hooks) -> impl Into<AnyEl
     }
 }
 
+/// Properties for the [`KittyMermaid`] component.
 #[derive(Default, Props)]
 pub struct KittyMermaidProps {
+    /// Mermaid diagram source code to render via Kitty graphics.
     pub source: String,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders a Mermaid diagram as a Kitty terminal graphic.
+///
+/// Parses the Mermaid source, renders to SVG, rasterizes to PNG,
+/// and places it in the terminal. Handles scroll-into-view and layout.
 #[component]
 pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);

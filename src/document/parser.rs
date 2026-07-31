@@ -3,6 +3,10 @@ use std::ops::Range;
 use super::model::*;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
+/// Parses a Markdown source string into a [`Document`].
+///
+/// Enables extensions for math (`$...$`), strikethrough (`~~...~~`),
+/// task lists (`- [ ]`), and tables.
 pub fn parse_markdown(source: &str) -> Document {
     let options = Options::ENABLE_MATH
         | Options::ENABLE_STRIKETHROUGH

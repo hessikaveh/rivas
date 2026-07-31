@@ -838,6 +838,11 @@ static UNICODE_MATH_CACHE: LazyLock<Mutex<UnicodeMathCache>> = LazyLock::new(|| 
     })
 });
 
+/// Renders a LaTeX math expression to a PNG image.
+///
+/// Uses `mathjax` for rendering with configurable display/inline mode, max width,
+/// and dark/light theme. Results are cached by content + parameters.
+/// Returns `(png_bytes, width, height)`.
 pub fn render_math(
     latex: &str,
     display: bool,
