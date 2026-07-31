@@ -2,6 +2,13 @@ use iocraft::prelude::*;
 
 use super::super::{EditorState, Mode};
 
+/// Handles key presses in Visual mode.
+///
+/// Motions extend the visual selection. `d`/`x` deletes the selection,
+/// `y` yanks it, `c` changes it (deletes and enters Insert mode).
+/// `Esc` or `v` returns to Normal mode.
+///
+/// Always returns `false` (visual mode never triggers a quit).
 pub fn handle_visual(s: &mut EditorState, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc | KeyCode::Char('v') => {

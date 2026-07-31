@@ -33,12 +33,18 @@ fn head_to_width(s: &str, max: usize) -> String {
     out
 }
 
+/// Properties for the [`CursorInfo`] component.
 #[derive(Default, Props)]
 pub struct CursorInfoProps {
+    /// Cursor row (0-indexed line number).
     pub row: usize,
+    /// Cursor column (0-indexed character index).
     pub col: usize,
+    /// Text before the cursor character (for the status bar preview).
     pub before: String,
+    /// The character under the cursor (displayed with highlight).
     pub cursor_char: String,
+    /// Text after the cursor character (for the status bar preview).
     pub after: String,
     /// Show the "↳" arrow prefix (used in the under-block indicator).
     pub show_arrow: Option<bool>,
@@ -53,6 +59,11 @@ pub struct CursorInfoProps {
     pub prefix_color: Option<Color>,
 }
 
+/// Renders the status bar cursor position indicator with a text preview.
+///
+/// Displays `"Ln X, Col Y: "` followed by a truncated preview of the current
+/// line with the cursor character highlighted. Truncation respects Unicode
+/// display width to avoid overflow.
 #[component]
 pub fn CursorInfo(props: &CursorInfoProps) -> impl Into<AnyElement<'static>> {
     let arrow = if props.show_arrow.unwrap_or(false) {

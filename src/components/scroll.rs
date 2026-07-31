@@ -92,6 +92,10 @@ pub enum ScrollDelta {
 /// The correct `y` position for any frame is therefore `baseline -
 /// scroll_offset`, even when `use_component_rect()` reports a stale
 /// rect on the frame where a scroll just happened.
+/// Tracks the scroll position for a component to enable scroll-into-view behavior.
+///
+/// Maintains a baseline from the component's layout rect and scroll offset,
+/// allowing stable position tracking across layout reflows.
 pub struct ScrollPosition {
     baseline: i32,
     baseline_scroll: i32,
@@ -99,6 +103,7 @@ pub struct ScrollPosition {
 }
 
 impl ScrollPosition {
+    /// Creates a new scroll position tracker with uninitialized baseline.
     pub fn new() -> Self {
         Self {
             baseline: 0,
@@ -137,15 +142,19 @@ impl ScrollPosition {
 /// Bundles viewport dimensions and the current scroll offset for
 /// consumption by scrollable components. Replaces the pattern of
 /// passing `viewport_height`, `viewport_width`, and `scroll_offset`
-/// as separate props through the component tree.
+/// Viewport dimensions and scroll state, passed through the component tree.
 #[derive(Default, Clone, Debug)]
 pub struct Viewport {
+    /// Height of the visible area in lines. Defaults to 24 if not set.
     pub height: Option<u32>,
+    /// Width of the visible area in columns. Defaults to 80 if not set.
     pub width: Option<u32>,
+    /// Current scroll offset in lines (for calculating relative positions).
     pub scroll_offset: Option<i32>,
 }
 
 impl Viewport {
+    /// Creates a new viewport with the given dimensions and scroll offset.
     pub fn new(height: Option<u32>, width: Option<u32>, scroll_offset: Option<i32>) -> Self {
         Self {
             height,
@@ -154,10 +163,12 @@ impl Viewport {
         }
     }
 
+    /// Returns the viewport height in lines, defaulting to 24.
     pub fn height(&self) -> u32 {
         self.height.unwrap_or(24)
     }
 
+    /// Returns the viewport width in columns, defaulting to 80.
     pub fn width(&self) -> u32 {
         self.width.unwrap_or(80)
     }

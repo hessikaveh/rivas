@@ -1,10 +1,17 @@
 use crate::theme;
 use iocraft::prelude::*;
+
+/// Properties for the [`HtmlBlock`] component.
 #[derive(Default, Props)]
 pub struct HtmlBlockProps {
+    /// Raw HTML content to display as a preview.
     pub content: String,
 }
 
+/// Renders a raw HTML block as a truncated preview in a bordered box.
+///
+/// Shows the first 50 characters of the first line as a preview,
+/// since full HTML rendering is not supported.
 #[component]
 pub fn HtmlBlock(props: &HtmlBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let preview = props

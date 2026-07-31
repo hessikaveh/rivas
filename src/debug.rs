@@ -17,6 +17,11 @@ static mut START: Option<Instant> = None;
 /// JSONL log writer, guarded by a Mutex.
 static mut LOG_WRITER: Option<Mutex<BufWriter<File>>> = None;
 
+/// Initializes the debug logging system.
+///
+/// When `logging` is true, creates a `rivas-debug.jsonl` file and records
+/// the start timestamp for relative timing. When `annotations` is true,
+/// enables visual debug overlays in the renderer.
 pub fn init(logging: bool, annotations: bool) {
     DEBUG_MODE.store(logging, Ordering::Relaxed);
     ANNOTATIONS_MODE.store(annotations, Ordering::Relaxed);
@@ -31,18 +36,24 @@ pub fn init(logging: bool, annotations: bool) {
     }
 }
 
+/// Returns `true` if debug JSON logging is enabled.
 pub fn is_enabled() -> bool {
     DEBUG_MODE.load(Ordering::Relaxed)
 }
 
+/// Returns `true` if visual debug annotations are enabled.
 pub fn are_annotations_enabled() -> bool {
     ANNOTATIONS_MODE.load(Ordering::Relaxed)
 }
 
+/// Returns the number of milliseconds elapsed since the app started (or 0 if logging is off).
 pub fn elapsed_ms() -> u128 {
     unsafe { START.map(|t| t.elapsed().as_millis()).unwrap_or(0) }
 }
 
+/// Appends a debug event as a JSON line to the log file.
+///
+/// Does nothing if debug logging is not enabled.
 pub fn log_event(event: &DebugEvent) {
     if !is_enabled() {
         return;
@@ -62,19 +73,27 @@ pub fn log_event(event: &DebugEvent) {
 // Event types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Cursor position recorded in debug events.
 #[derive(Serialize)]
 pub struct CursorPos {
+    /// Byte offset from the start of the document.
     pub byte: usize,
+    /// Line number (0-indexed).
     pub row: usize,
+    /// Column index (0-indexed character position within the line).
     pub col: usize,
 }
 
+/// Viewport dimensions recorded in debug events.
 #[derive(Serialize)]
 pub struct ViewportInfo {
+    /// Width in columns.
     pub w: u32,
+    /// Height in lines.
     pub h: u32,
 }
 
+/// A debug event that can be serialized to JSONL for analysis.
 #[derive(Serialize)]
 #[serde(tag = "event")]
 pub enum DebugEvent {

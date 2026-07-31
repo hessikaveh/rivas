@@ -5,15 +5,25 @@ use crate::theme;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 
+/// Properties for the [`TableBlock`] component.
 #[derive(Default, Props)]
 pub struct TableBlockProps {
+    /// Column header cells.
     pub headers: Vec<TableCell>,
+    /// Per-column alignment (left, center, right, none).
     pub alignments: Vec<Alignment>,
+    /// Table body rows, each containing cells.
     pub rows: Vec<Vec<TableCell>>,
+    /// File path for link resolution in cell content.
     pub file_path: PathBuf,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders a Markdown table with alignment support and styled borders.
+///
+/// Calculates column widths from content, renders headers with bold styling,
+/// and applies alignment to each cell.
 #[component]
 pub fn TableBlock(props: &TableBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let ncols = props.headers.len();

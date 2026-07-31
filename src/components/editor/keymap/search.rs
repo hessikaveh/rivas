@@ -2,6 +2,13 @@ use iocraft::prelude::*;
 
 use super::super::{EditorState, Mode};
 
+/// Handles key presses in Search mode (`/` or `?`).
+///
+/// Characters are appended to the search pattern (`cmd_buf`).
+/// Enter executes the search and moves the cursor to the first match.
+/// `n` repeats forward, `N` repeats backward. Esc cancels the search.
+///
+/// Always returns `false` (search mode never triggers a quit).
 pub fn handle_search(s: &mut EditorState, code: KeyCode, forward: bool) -> bool {
     match code {
         KeyCode::Esc => {
@@ -27,6 +34,10 @@ pub fn handle_search(s: &mut EditorState, code: KeyCode, forward: bool) -> bool 
     false
 }
 
+/// Executes the last search pattern in the given direction.
+///
+/// Uses `Buffer::search_forward` or `Buffer::search_backward` to find the next/previous
+/// match. Moves the cursor on success, or sets a "Pattern not found" message on failure.
 pub(crate) fn do_search(s: &mut EditorState, forward: bool) {
     if s.last_search.is_empty() {
         return;

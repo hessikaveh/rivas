@@ -4,13 +4,21 @@ use std::fmt;
 // CharClass
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Classification of a character for word-motion purposes.
+///
+/// Determines word boundaries: a word is a contiguous run of [`Word`](CharClass::Word) or
+/// [`Punct`](CharClass::Punct) characters, separated by [`Whitespace`](CharClass::Whitespace).
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub(crate) enum CharClass {
+    /// Alphanumeric characters and underscores (`[a-zA-Z0-9_]`).
     Word,
+    /// Any non-whitespace, non-alphanumeric character.
     Punct,
+    /// Spaces, tabs, and other whitespace.
     Whitespace,
 }
 
+/// Returns the [`CharClass`] of a character.
 pub(crate) fn char_class(c: char) -> CharClass {
     if c.is_whitespace() {
         CharClass::Whitespace
@@ -25,12 +33,20 @@ pub(crate) fn char_class(c: char) -> CharClass {
 // Buffer
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// A multi-line text buffer backed by a `Vec<String>`.
+///
+/// All public methods use **character indices** (not byte offsets) for column positions,
+/// converting internally via [`byte_offset`](Buffer::byte_offset) when needed for
+/// string slicing. This makes the API safe for multi-byte Unicode content.
 #[derive(Clone, Debug)]
 pub struct Buffer {
     pub lines: Vec<String>,
 }
 
 impl Buffer {
+    /// Creates a new buffer from the given text.
+    ///
+    /// Splits on `\n`. An empty input produces a single empty line.
     pub fn new(text: &str) -> Self {
         let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
         if lines.is_empty() {
@@ -39,27 +55,41 @@ impl Buffer {
         Self { lines }
     }
 
+    /// Reconstructs the full text content by joining all lines with `\n`.
     pub fn to_text(&self) -> String {
         self.lines.join("\n")
     }
 
+    /// Returns the number of lines in the buffer.
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
 
+    /// Returns the content of line `row` as a string slice.
+    ///
+    /// Clamps `row` to the valid range — never panics.
     pub fn line(&self, row: usize) -> &str {
         &self.lines[row.min(self.lines.len().saturating_sub(1))]
     }
 
+    /// Returns a mutable reference to the content of line `row`.
+    ///
+    /// Clamps `row` to the valid range — never panics.
     pub fn line_mut(&mut self, row: usize) -> &mut String {
         let idx = row.min(self.lines.len().saturating_sub(1));
         &mut self.lines[idx]
     }
 
+    /// Returns the number of Unicode characters (scalar values) in line `row`.
     pub fn char_count(&self, row: usize) -> usize {
         self.line(row).chars().count()
     }
 
+    /// Clamps `col` to a valid position within line `row`.
+    ///
+    /// In insert mode (`insert = true`), `col` may equal `char_count` (cursor past last char).
+    /// In normal mode (`insert = false`), `col` is at most `char_count - 1` (on a character).
+    /// Returns `0` for empty lines in normal mode.
     pub fn clamp_col(&self, row: usize, col: usize, insert: bool) -> usize {
         let len = self.char_count(row);
         if insert {
@@ -71,6 +101,9 @@ impl Buffer {
         }
     }
 
+    /// Converts a character-index column to a byte offset within line `row`.
+    ///
+    /// Returns `line.len()` if `col` is at or past the end of the line.
     pub fn byte_offset(&self, row: usize, col: usize) -> usize {
         self.line(row)
             .char_indices()
@@ -79,6 +112,9 @@ impl Buffer {
             .unwrap_or(self.line(row).len())
     }
 
+    /// Inserts a single character at position `col` on line `row`.
+    ///
+    /// Extends the buffer with empty lines if `row` is beyond the current end.
     pub fn insert_char(&mut self, row: usize, col: usize, ch: char) {
         while row >= self.lines.len() {
             self.lines.push(String::new());
@@ -87,6 +123,10 @@ impl Buffer {
         self.lines[row].insert(byte, ch);
     }
 
+    /// Inserts text at position `col` on line `row`.
+    ///
+    /// If `text` contains newlines, the line is split and new lines are inserted.
+    /// Returns the `(row, col)` of the cursor position after the last inserted character.
     pub fn insert_text(&mut self, row: usize, col: usize, text: &str) -> (usize, usize) {
         if text.is_empty() {
             return (row, col);
@@ -116,6 +156,9 @@ impl Buffer {
         }
     }
 
+    /// Deletes the character at `col` on line `row`.
+    ///
+    /// Returns the deleted character, or `None` if `col` is past the end of the line.
     pub fn delete_char(&mut self, row: usize, col: usize) -> Option<char> {
         if col >= self.char_count(row) {
             return None;
@@ -124,12 +167,16 @@ impl Buffer {
         Some(self.lines[row].remove(byte))
     }
 
+    /// Splits line `row` at `col`, moving everything from `col` onward to a new line below.
     pub fn split_line(&mut self, row: usize, col: usize) {
         let byte = self.byte_offset(row, col);
         let rest = self.lines[row].split_off(byte);
         self.lines.insert(row + 1, rest);
     }
 
+    /// Joins line `row + 1` onto line `row`, removing the newline between them.
+    ///
+    /// Does nothing if `row + 1` is beyond the buffer end.
     pub fn join_lines(&mut self, row: usize) {
         if row + 1 < self.lines.len() {
             let next = self.lines.remove(row + 1);
@@ -137,6 +184,9 @@ impl Buffer {
         }
     }
 
+    /// Removes line `row` from the buffer, returning its content.
+    ///
+    /// If this is the only line, clears it instead of removing it (the buffer always has at least one line).
     pub fn delete_line(&mut self, row: usize) -> String {
         if self.lines.len() == 1 {
             let s = self.lines[0].clone();
@@ -147,10 +197,14 @@ impl Buffer {
         }
     }
 
+    /// Inserts a new line with the given `content` at position `row`.
     pub fn insert_line(&mut self, row: usize, content: String) {
         self.lines.insert(row, content);
     }
 
+    /// Replaces the character range `[col_start, col_end)` on line `row` with `s`.
+    ///
+    /// If `col_end` exceeds the line length, the replacement extends to the end.
     pub fn replace_range_on_line(&mut self, row: usize, col_start: usize, col_end: usize, s: &str) {
         let start = self.byte_offset(row, col_start);
         let end = self.byte_offset(row, col_end);
@@ -160,6 +214,11 @@ impl Buffer {
         self.lines[row] = new;
     }
 
+    /// Moves the cursor forward by one word (Vim `w` motion).
+    ///
+    /// Skips the current word class (word/punct), then skips whitespace.
+    /// Wraps to the beginning of the next line at line end.
+    /// Returns `(row, col)` of the destination.
     pub fn word_forward(&self, row: usize, col: usize) -> (usize, usize) {
         let chars: Vec<char> = self.line(row).chars().collect();
         if chars.is_empty() {
@@ -193,6 +252,11 @@ impl Buffer {
         }
     }
 
+    /// Moves the cursor backward by one word (Vim `b` motion).
+    ///
+    /// Skips whitespace backward, then skips the preceding word class.
+    /// Wraps to the end of the previous line at line start.
+    /// Returns `(row, col)` of the destination.
     pub fn word_backward(&self, row: usize, col: usize) -> (usize, usize) {
         if col == 0 {
             if row > 0 {
@@ -225,6 +289,10 @@ impl Buffer {
         (row, c as usize)
     }
 
+    /// Moves the cursor to the end of the current word (Vim `e` motion).
+    ///
+    /// Skips whitespace forward, then advances to the last character of the word class.
+    /// Returns `(row, col)` of the destination.
     pub fn word_end(&self, row: usize, col: usize) -> (usize, usize) {
         let chars: Vec<char> = self.line(row).chars().collect();
         if chars.is_empty() {
@@ -254,6 +322,10 @@ impl Buffer {
         (row, c)
     }
 
+    /// Searches forward on line `row` for `target`, starting after `col`.
+    ///
+    /// If `before` is true, returns the position just before the match; otherwise,
+    /// returns the position of the match itself. Returns `None` if not found on this line.
     pub fn find_forward(
         &self,
         row: usize,
@@ -270,6 +342,10 @@ impl Buffer {
         None
     }
 
+    /// Searches backward on line `row` for `target`, ending before `col`.
+    ///
+    /// If `before` is true, returns the position just after the match; otherwise,
+    /// returns the position of the match itself. Returns `None` if not found on this line.
     pub fn find_backward(
         &self,
         row: usize,
@@ -293,6 +369,9 @@ impl Buffer {
         None
     }
 
+    /// Returns the column of the first non-whitespace character on line `row`.
+    ///
+    /// Returns `0` if the line is empty or has no leading whitespace.
     pub fn first_non_blank(&self, row: usize) -> usize {
         self.line(row)
             .chars()
@@ -300,6 +379,11 @@ impl Buffer {
             .count()
     }
 
+    /// Searches forward across the entire buffer for `pat`.
+    ///
+    /// Starts searching from `(start_row, start_col)`, wrapping around to the beginning
+    /// if necessary. Returns `Some((row, col))` of the first match, or `None` if not found.
+    /// The `col` in the result is the character index where the pattern begins.
     pub fn search_forward(
         &self,
         pat: &str,
@@ -333,6 +417,11 @@ impl Buffer {
         None
     }
 
+    /// Searches backward across the entire buffer for `pat`.
+    ///
+    /// Starts searching from `(start_row, start_col)`, wrapping around to the end
+    /// if necessary. Returns `Some((row, col))` of the first match, or `None` if not found.
+    /// The `col` in the result is the character index where the pattern begins.
     pub fn search_backward(
         &self,
         pat: &str,
@@ -365,6 +454,7 @@ impl Buffer {
     }
 }
 
+/// Formats the buffer as its full text content (lines joined by `\n`).
 impl fmt::Display for Buffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_text())

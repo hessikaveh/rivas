@@ -1,4 +1,7 @@
-/// Block-level elements
+/// Block-level elements in a Markdown document.
+///
+/// Each variant carries a `span: (usize, usize)` recording the byte range
+/// `[start, end)` in the original source text.
 #[derive(Debug, Clone)]
 pub enum Block {
     Heading {
@@ -55,26 +58,37 @@ pub enum Block {
     },
 }
 
+/// A single item in a bullet or ordered list.
 #[derive(Debug, Clone)]
 pub struct ListItem {
+    /// Task-list checkbox state: `Some(true)` = checked, `Some(false)` = unchecked, `None` = not a task.
     pub checked: Option<bool>,
+    /// Nested blocks contained in this list item.
     pub content: Vec<Block>,
 }
 
+/// A single cell in a Markdown table, containing inline content.
 #[derive(Debug, Clone)]
 pub struct TableCell {
+    /// Inline content of the cell.
     pub content: Vec<Inline>,
 }
 
+/// Column alignment in a Markdown table.
 #[derive(Debug, Clone, Copy)]
 pub enum Alignment {
+    /// Left-aligned (`:---`).
     Left,
+    /// Center-aligned (`:---:`).
     Center,
+    /// Right-aligned (`---:`).
     Right,
+    /// No alignment specified (`---`).
     None,
 }
 
 impl Block {
+    /// Returns the byte-range span `(start, end)` of this block in the source text.
     pub fn span(&self) -> (usize, usize) {
         match self {
             Block::Heading { span, .. } => *span,
@@ -92,22 +106,38 @@ impl Block {
     }
 }
 
+/// Inline (phrasing) content within a block element.
+///
+/// Inlines are the leaf nodes of the document tree — text, formatting,
+/// links, images, and breaks.
 #[derive(Debug, Clone)]
 pub enum Inline {
+    /// Plain text.
     Text(String),
+    /// Bold text (`**...**` or `__...__`).
     Bold(Vec<Inline>),
+    /// Italic text (`*...*` or `_..._`).
     Italic(Vec<Inline>),
+    /// Strikethrough text (`~~...~~`).
     Strikethrough(Vec<Inline>),
+    /// Inline code (`` `...` ``).
     Code(String),
+    /// Inline math (`$...$`).
     Math(String),
+    /// Hyperlink (`[text](url)`).
     Link { text: Vec<Inline>, url: String },
+    /// Inline image (`![alt](url)`).
     Image { alt: String, url: String },
+    /// A soft line break (single newline in source).
     SoftBreak,
+    /// A hard line break (two trailing spaces or `\` at line end).
     HardBreak,
 }
 
+/// A parsed Markdown document, consisting of a sequence of top-level blocks.
 #[derive(Clone)]
 pub struct Document {
+    /// The ordered list of block-level elements in the document.
     pub blocks: Vec<Block>,
 }
 

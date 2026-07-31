@@ -5,13 +5,18 @@ use crate::theme;
 use iocraft::prelude::*;
 use std::path::PathBuf;
 
+/// Properties for the [`Paragraph`] component.
 #[derive(Default, Props)]
 pub struct ParagraphProps {
+    /// Inline content to render as paragraph text.
     pub content: Vec<Inline>,
+    /// Optional file path for link resolution.
     pub file_path: Option<PathBuf>,
+    /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
 }
 
+/// Renders a paragraph of inline Markdown content.
 #[component]
 pub fn Paragraph(props: &ParagraphProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let styled_elements = render_inlines(

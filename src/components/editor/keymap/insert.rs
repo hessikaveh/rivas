@@ -2,6 +2,14 @@ use iocraft::prelude::*;
 
 use super::super::{EditorState, Mode};
 
+/// Handles key presses in Insert mode.
+///
+/// Typed characters are inserted into the buffer at the cursor position.
+/// Supports Enter (line split), Backspace (delete backward / join lines),
+/// Delete (delete forward), and arrow keys for cursor movement.
+/// Esc or Ctrl-C exits to Normal mode (cursor moves left one position).
+///
+/// Always returns `false` (insert mode never triggers a quit).
 pub fn handle_insert(s: &mut EditorState, code: KeyCode, ctrl: bool) -> bool {
     match code {
         KeyCode::Esc => {

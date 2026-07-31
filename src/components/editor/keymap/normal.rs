@@ -4,6 +4,14 @@ use super::super::mode::MotionType;
 use super::super::{EditorState, Mode};
 use super::search::do_search;
 
+/// Handles key presses in Normal mode.
+///
+/// Processes motions (`hjkl`, `w`, `b`, `e`, `0`, `$`, `^`, `G`, `gg`, `{`, `}`),
+/// operators (`d`, `c`, `y`, `x`, `X`, `r`, `~`, `>`, `<`, `J`), mode switches
+/// (`i`, `I`, `a`, `A`, `o`, `O`, `s`, `v`, `:`, `/`, `?`), and special commands
+/// (`u`, `Ctrl-R`, `p`, `P`, `n`, `N`, `;`, `,`, `ZZ`, `ZQ`).
+///
+/// Returns `true` if the editor should quit.
 pub fn handle_normal(s: &mut EditorState, code: KeyCode, ctrl: bool) -> bool {
     if ctrl {
         match code {

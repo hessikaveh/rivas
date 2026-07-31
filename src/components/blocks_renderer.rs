@@ -130,19 +130,34 @@ fn ScrollIntoViewContainer(
     }
 }
 
+/// Properties for the [`BlocksRenderer`] component.
 #[derive(Default, Props)]
 pub struct BlocksRendererProps {
+    /// The parsed Markdown blocks to render.
     pub blocks: Vec<Block>,
+    /// The full source text of the document (for byte-offset calculations in the editor).
     pub content: String,
+    /// File path for resolving relative image/link URLs.
     pub file_path: PathBuf,
+    /// Optional viewport dimensions for line wrapping and responsive rendering.
     pub viewport: Option<Viewport>,
+    /// Current cursor byte offset in the document (for editor cursor overlay).
     pub cursor_offset: Option<Ref<usize>>,
+    /// Reference to the editor state (for cursor rendering and mode checks).
     pub editor_state: Option<Ref<Option<EditorState>>>,
+    /// Handle for scrolling the cursor into view.
     pub scroll_handle: Option<Ref<ScrollViewHandle>>,
+    /// `true` to render debug overlays (block boundaries, byte offsets).
     pub debug: bool,
+    /// `true` to render inline debug annotations (highlight spans, block types).
     pub debug_annotations: bool,
 }
 
+/// Renders a sequence of Markdown blocks with optional editor cursor overlay.
+///
+/// Each block is rendered as its appropriate component (heading, paragraph, code, etc.).
+/// When the editor is active, a cursor block and visual selection highlights are overlaid.
+/// Line wrapping is applied based on the viewport width.
 #[component]
 pub fn BlocksRenderer(
     props: &BlocksRendererProps,

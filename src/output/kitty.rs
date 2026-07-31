@@ -5,6 +5,9 @@ use std::{
 
 const CHUNK_SIZE: usize = 4096;
 
+/// Returns `true` if the terminal supports the Kitty graphics protocol.
+///
+/// Checks `$TERM_PROGRAM` for kitty/WezTerm/ghostty, or `$TERM` for `kitty`.
 pub fn is_supported() -> bool {
     if let Ok(term) = std::env::var("TERM_PROGRAM") {
         return matches!(term.as_str(), "kitty" | "WezTerm" | "ghostty");
@@ -17,6 +20,9 @@ pub fn is_supported() -> bool {
 
 static NEXT_PLACEMENT_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Allocates and returns the next unique placement ID for Kitty graphics.
+///
+/// IDs are 24-bit (max `0x00FF_FFFF`) and increment atomically.
 pub fn next_placement_id() -> u32 {
     NEXT_PLACEMENT_ID.fetch_add(1, Ordering::Relaxed) & 0x00FF_FFFF
 }
@@ -75,6 +81,10 @@ pub fn transmit_only_encoded<W: Write>(
     );
 }
 
+/// Transmits multiple animation frames to the terminal's graphic store.
+///
+/// Each frame is a base64-encoded PNG with a delay in milliseconds.
+/// Uses the `a=f` (frame) command for animated GIF support.
 pub fn write_animation_frames_encoded<W: Write>(w: &mut W, id: u32, frames: &[(&str, u32)]) {
     for (encoded, delay_ms) in frames {
         chunked_write(
@@ -88,6 +98,7 @@ pub fn write_animation_frames_encoded<W: Write>(w: &mut W, id: u32, frames: &[(&
 
 // --- commands ---
 
+/// Starts animation playback for a previously transmitted animated image.
 pub fn start_animation<W: Write>(w: &mut W, id: u32) {
     write!(w, "\x1b_Ga=a,i={},s=3,v=1,q=2;\x1b\\", id).unwrap();
 }
@@ -103,6 +114,7 @@ pub fn delete_image<W: Write>(w: &mut W, id: u32) {
     write!(w, "\x1b_Ga=d,d=I,i={},q=2;\x1b\\", id).unwrap();
 }
 
+/// Deletes all Kitty graphic placements and frees associated image data.
 pub fn delete_all<W: Write>(w: &mut W) {
     write!(w, "\x1b_Ga=d,d=a,q=2;\x1b\\").unwrap();
 }

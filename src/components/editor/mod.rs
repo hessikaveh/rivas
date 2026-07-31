@@ -15,31 +15,62 @@ use history::{History, HistoryEntry, Registers};
 // EditorState — pure logic, no iocraft types
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// The complete state of the editor, owning the buffer, cursor, mode, and all
+/// editing sub-systems (registers, history, search, visual selection).
+///
+/// This is a pure-logic struct with no iocraft dependencies. Key presses are
+/// dispatched via [`handle_key`], which reads and mutates
+/// the state to implement Vim-style editing.
 pub struct EditorState {
+    /// The text buffer being edited.
     pub buf: Buffer,
+    /// Cursor row (0-indexed line number).
     pub row: usize,
+    /// Cursor column (0-indexed character index within the line).
     pub col: usize,
+    /// The desired column for vertical movement — restores `col` when moving
+    /// to a longer line after a shorter one (Vim's "column want" behavior).
     pub col_want: usize,
+    /// Current input mode determining how key presses are interpreted.
     pub mode: Mode,
+    /// Text typed in command-line mode (`:` prefix), executed on Enter.
     pub cmd_buf: String,
+    /// Digit characters typed for a count prefix (e.g., `"3"` in `3dd`).
     pub count_buf: String,
+    /// A pending operator awaiting a motion (e.g., `d` in `dw` before `w` is typed).
     pub operator: Option<char>,
+    /// A pending find/till motion awaiting its target character (e.g., `f` before `x` in `fx`).
     pub pending: Option<char>,
+    /// Last find/till target for `;` and `,` repeat (character, is_backward).
     pub last_find: Option<(char, bool)>,
+    /// Named registers for yank/paste operations.
     pub registers: Registers,
+    /// The start position of the current visual selection.
     pub visual_start: (usize, usize),
+    /// Undo/redo history stack.
     pub history: History,
+    /// File path associated with this buffer (used for `:w` / `:wq`).
     pub filename: String,
+    /// `true` if the buffer has unsaved modifications.
     pub modified: bool,
+    /// Status message displayed in the command line (cleared on next keypress).
     pub message: String,
+    /// The last search pattern (for `n`/`N` repeat).
     pub last_search: String,
+    /// `true` if the last search was forward (`/`); `false` for backward (`?`).
     pub search_forward: bool,
+    /// Number of visible lines in the viewport (for Ctrl-D/U/F/B scrolling).
     pub view_height: usize,
+    /// Number of visible columns in the viewport (for line wrapping).
     pub view_width: usize,
+    /// Set to `true` when the editor should trigger a full re-render.
     pub needs_rerender: bool,
 }
 
 impl EditorState {
+    /// Creates a new editor state with the given `filename` and initial `content`.
+    ///
+    /// The cursor starts at row 0, column 0, in Normal mode.
     pub fn new(filename: String, content: &str) -> Self {
         Self {
             buf: Buffer::new(content),
@@ -66,10 +97,12 @@ impl EditorState {
         }
     }
 
+    /// Returns the numeric count from the count buffer, defaulting to 1.
     pub(crate) fn count(&self) -> usize {
         self.count_buf.parse::<usize>().unwrap_or(1).max(1)
     }
 
+    /// Saves the current buffer state and cursor position to the undo stack.
     pub(crate) fn push_undo(&mut self) {
         self.history.push(HistoryEntry {
             buffer: self.buf.clone(),
@@ -78,6 +111,7 @@ impl EditorState {
         });
     }
 
+    /// Restores the previous buffer state from the undo stack.
     pub(crate) fn undo(&mut self) {
         let current = HistoryEntry {
             buffer: self.buf.clone(),
@@ -95,6 +129,7 @@ impl EditorState {
         }
     }
 
+    /// Restores the buffer state from the redo stack (re-applies an undone change).
     pub(crate) fn redo(&mut self) {
         let current = HistoryEntry {
             buffer: self.buf.clone(),
@@ -112,6 +147,7 @@ impl EditorState {
         }
     }
 
+    /// Clamps `row` and `col` to valid positions within the buffer.
     pub(crate) fn clamp(&mut self) {
         let n = self.buf.line_count();
         if self.row >= n {
@@ -122,6 +158,10 @@ impl EditorState {
             .clamp_col(self.row, self.col, self.mode == Mode::Insert);
     }
 
+    /// Returns the byte offset of the cursor from the start of the full document text.
+    ///
+    /// Used to map the logical `(row, col)` position to a byte position for the
+    /// rendering layer in [`blocks_renderer`](crate::components::blocks_renderer).
     pub fn absolute_byte_offset(&self) -> usize {
         let mut offset = 0;
         for i in 0..self.row {
@@ -131,6 +171,10 @@ impl EditorState {
         offset
     }
 
+    /// Returns the byte offset of the given `(row, col)` position from the start of the document.
+    ///
+    /// Like [`absolute_byte_offset`](EditorState::absolute_byte_offset) but accepts
+    /// arbitrary coordinates instead of using the current cursor position.
     pub fn absolute_byte_offset_at(&self, row: usize, col: usize) -> usize {
         let mut offset = 0;
         for i in 0..row {
@@ -140,10 +184,15 @@ impl EditorState {
         offset
     }
 
+    /// Stores `text` in the given register.
     pub(crate) fn yank(&mut self, reg: char, text: String) {
         self.registers.yank(reg, text);
     }
 
+    /// Pastes register content after the cursor.
+    ///
+    /// Linewise pastes (text ending with `\n`) insert new lines below the current line.
+    /// Charwise pastes insert inline at the cursor position.
     pub(crate) fn paste_after(&mut self, reg: char) {
         let text = self.registers.resolve_paste_text(reg);
         if text.is_empty() {
@@ -171,6 +220,10 @@ impl EditorState {
         self.clamp();
     }
 
+    /// Pastes register content before the cursor.
+    ///
+    /// Linewise pastes insert new lines above the current line.
+    /// Charwise pastes insert inline at the cursor position.
     pub(crate) fn paste_before(&mut self, reg: char) {
         let text = self.registers.resolve_paste_text(reg);
         if text.is_empty() {
@@ -195,6 +248,10 @@ impl EditorState {
         self.clamp();
     }
 
+    /// Computes the destination `(row, col)` for a single-character motion.
+    ///
+    /// Supports `h`, `l`, `j`, `k`, `0`, `^`, `$`, `w`, `b`, `e`, `G`, `{`, `}`,
+    /// `f`, `t`, `F`, `T`. Returns `None` for unrecognized motions.
     pub(crate) fn apply_motion(
         &self,
         motion: char,
@@ -268,6 +325,12 @@ impl EditorState {
         }
     }
 
+    /// Executes an operator (`d`, `c`, `y`) over the range from the cursor to `dest`.
+    ///
+    /// The range is defined by `motion_type`: inclusive, exclusive, or linewise.
+    /// For `d`/`c`, the affected text is deleted and (for `c`) the editor enters Insert mode.
+    /// For `y`, the text is yanked without deletion.
+    /// `reg` specifies the register for the yank.
     pub(crate) fn execute_operator(
         &mut self,
         op: char,
@@ -366,6 +429,10 @@ impl EditorState {
         }
     }
 
+    /// Deletes `count` lines starting at the current row.
+    ///
+    /// Yanks the deleted lines to the specified register. If the cursor moves past
+    /// the end of the buffer, it clamps to the last line.
     pub(crate) fn delete_lines(&mut self, count: usize, reg: char) {
         self.push_undo();
         let mut yanked = String::new();
@@ -384,6 +451,10 @@ impl EditorState {
         self.modified = true;
     }
 
+    /// Yanks `count` lines starting at the current row into the given register.
+    ///
+    /// Each yanked line includes a trailing newline. Sets a status message
+    /// indicating how many lines were yanked.
     pub(crate) fn yank_lines(&mut self, count: usize, reg: char) {
         let mut yanked = String::new();
         for i in 0..count {
@@ -395,6 +466,16 @@ impl EditorState {
         self.message = format!("{} line{} yanked", count, if count != 1 { "s" } else { "" });
     }
 
+    /// Executes the command typed in command-line mode (`cmd_buf`).
+    ///
+    /// Returns `true` if the editor should quit. Supported commands:
+    /// - `:w` / `:write` — write file to disk
+    /// - `:q` — quit (fails if unsaved changes)
+    /// - `:q!` — force quit
+    /// - `:wq` / `:x` — write and quit
+    /// - `:wq!` — force write and quit
+    /// - `:N` — jump to line number N
+    /// - `:math` / `:math unicode` / `:math image` — toggle math rendering mode
     pub(crate) fn execute_command(&mut self) -> bool {
         let cmd = self.cmd_buf.clone();
         self.cmd_buf.clear();

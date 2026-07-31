@@ -12,12 +12,16 @@ fn compute_hash(content: &str) -> u64 {
     hasher.finish()
 }
 
-/// Thread-safe parse cache
+/// Thread-safe cache for parsed Markdown documents.
+///
+/// Keys documents by a hash of their source content. Bounded to 32 entries
+/// with a simple eviction strategy (clear half when full).
 pub struct ParseCache {
     cache: Arc<Mutex<HashMap<u64, Document>>>,
 }
 
 impl ParseCache {
+    /// Creates an empty parse cache with pre-allocated capacity for 16 entries.
     pub fn new() -> Self {
         ParseCache {
             cache: Arc::new(Mutex::new(HashMap::with_capacity(16))),
