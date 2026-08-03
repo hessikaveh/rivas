@@ -1,5 +1,6 @@
 use crate::document::model::{Block, inlines_to_text};
 use crate::output::graphics_manager::IMAGE_HEIGHT_CACHE;
+use crate::theme;
 use iocraft::prelude::KeyCode;
 
 /// Describes a user-initiated scroll action from a key press.
@@ -175,7 +176,13 @@ impl Viewport {
 }
 /// Estimate the height of a block in terminal rows.
 pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u32 {
-    let wrap_width = vw.unwrap_or(80) as usize;
+    // Content width matches what the rendered Paragraph actually wraps at
+    // (viewport minus border + padding), so virtual-scroll spacers don't
+    // underestimate real heights in narrow windows.
+    let wrap_width = vw
+        .unwrap_or(80)
+        .saturating_sub(theme::CONTENT_H_INSET)
+        .max(1) as usize;
     match block {
         Block::Heading { .. } => 2,
         Block::Paragraph { content, .. } => {

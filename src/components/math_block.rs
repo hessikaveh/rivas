@@ -258,21 +258,19 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
         if !acquired_key.read().is_empty() {
             release(acquired_key.read().clone());
         }
-        let cell_w = caps_cache
-            .read()
-            .clone()
-            .unwrap_or_default()
-            .cell_w_px
-            .max(1) as u32;
-        let max_w = (cell_w * 2).max(16) * vw;
+        let mc = vw.saturating_sub(theme::CONTENT_H_INSET).max(1);
+        let mr = vh.saturating_sub(theme::CONTENT_V_INSET).max(1);
+        let caps = caps_cache.read().clone().unwrap_or_default();
+        let max_w =
+            crate::output::graphics_manager::raster_max_width(mc, caps.cell_w_px.max(1) as u32);
         acquire(
             key.clone(),
             GfxSource::Math {
                 content: props.content.clone(),
                 display: props.display,
                 max_w,
-                max_cols: vw,
-                max_rows: vh,
+                max_cols: mc,
+                max_rows: mr,
             },
         );
         *cur_key.read().lock().unwrap() = key.clone();
@@ -309,7 +307,6 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
         if pos != drawn_at.get() {
             drawn_at.set(pos);
 
-            let caps = caps_cache.read().clone().unwrap_or_default();
             let img_cols = *cols.read() as i32;
             let img_rows = *rows.read() as i32;
 
@@ -328,8 +325,6 @@ pub fn KittyMath(props: &KittyMathProps, mut hooks: Hooks) -> impl Into<AnyEleme
                 vis_cols: visible_cols,
                 vis_rows: actual_vis_rows,
                 src_y_offset: top_clip_rows,
-                cell_w: caps.cell_w_px as u32,
-                cell_h: caps.cell_h_px as u32,
             };
 
             if visible {

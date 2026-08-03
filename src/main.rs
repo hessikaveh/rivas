@@ -55,6 +55,17 @@ struct Cli {
     /// Use this if your terminal supports Kitty but is not auto-detected.
     #[arg(long)]
     force_kitty: bool,
+    /// Override the pixel width of a terminal cell. Graphics are shown at their
+    /// natural pixel size mapped onto this cell, so this directly grows/shrinks
+    /// images, diagrams and formulas. Use it to correct a terminal whose
+    /// `TIOCGWINSZ` pixel size is wrong (e.g. a secondary display). If only one
+    /// axis is given, the other defaults to its standard value (16).
+    #[arg(long)]
+    cell_width: Option<u16>,
+    /// Override the pixel height of a terminal cell (see `--cell-width`).
+    /// If only one axis is given, the other defaults to 8.
+    #[arg(long)]
+    cell_height: Option<u16>,
 }
 
 /// Whether debug JSON logging is enabled (from --debug or --debug-json-only)
@@ -106,7 +117,19 @@ fn main() -> Result<()> {
     };
 
     // Terminal capability check
+    match (cli.cell_width, cli.cell_height) {
+        (Some(w), Some(h)) => output::capabilities::override_cell_size(w, h),
+        (Some(w), None) => output::capabilities::override_cell_size(w, 16),
+        (None, Some(h)) => output::capabilities::override_cell_size(8, h),
+        (None, None) => {}
+    }
     let _caps = output::capabilities::TermCaps::detect()?;
+    debug::log_event(&debug::DebugEvent::TermCaps {
+        ts: debug::elapsed_ms(),
+        cell_w: _caps.cell_w_px,
+        cell_h: _caps.cell_h_px,
+        overridden: cli.cell_width.is_some() || cli.cell_height.is_some(),
+    });
     if cli.force_kitty {
         output::capabilities::force_kitty();
     }
@@ -272,6 +295,9 @@ fn App<'a>(props: &AppProps<'a>, mut hooks: Hooks) -> impl Into<AnyElement<'stat
                     Text(content: " :math ", color: theme::FG)
                 }
                 Text(content: " Math mode ")
+                View(background_color: theme::DARK_GREY) {
+                    Text(content: " 🔍 [ ] ", color: theme::FG)
+                }
                 View(flex_grow: 1.0) {}
             }
         }

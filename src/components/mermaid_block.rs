@@ -100,20 +100,18 @@ pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<An
         if !acquired_key.read().is_empty() {
             release(acquired_key.read().clone());
         }
-        let cell_w = caps_cache
-            .read()
-            .clone()
-            .unwrap_or_default()
-            .cell_w_px
-            .max(1) as f32;
-        let max_w = ((vw as f32) * cell_w * 2.0).round() as u32;
+        let mc = vw.saturating_sub(theme::CONTENT_H_INSET).max(1);
+        let mr = vh.saturating_sub(theme::CONTENT_V_INSET).max(1);
+        let caps = caps_cache.read().clone().unwrap_or_default();
+        let max_w =
+            crate::output::graphics_manager::raster_max_width(mc, caps.cell_w_px.max(1) as u32);
         acquire(
             key.clone(),
             GfxSource::Mermaid {
                 source: props.source.clone(),
                 max_w,
-                max_cols: (2.0 * vw as f32).round() as u32,
-                max_rows: vh,
+                max_cols: mc,
+                max_rows: mr,
             },
         );
         *cur_key.read().lock().unwrap() = key.clone();
@@ -155,7 +153,6 @@ pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<An
         if pos != drawn_at.get() {
             drawn_at.set(pos);
 
-            let caps = caps_cache.read().clone().unwrap_or_default();
             let img_cols = *cols.read() as i32;
             let img_rows = *rows.read() as i32;
 
@@ -174,8 +171,6 @@ pub fn KittyMermaid(props: &KittyMermaidProps, mut hooks: Hooks) -> impl Into<An
                 vis_cols: visible_cols,
                 vis_rows: actual_vis_rows,
                 src_y_offset: top_clip_rows,
-                cell_w: caps.cell_w_px as u32,
-                cell_h: caps.cell_h_px as u32,
             };
 
             if visible {
