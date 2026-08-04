@@ -84,6 +84,14 @@ pub const BLOCK_PADDING: u32 = 4;
 pub const TOTAL_VIEWPORT_OFFSET: u32 =
     VIEWPORT_BORDER_WIDTH + VIEWPORT_SCROLLBAR_WIDTH + VIEWPORT_INNER_PADDING + BLOCK_PADDING;
 
+/// Horizontal room taken up by the viewport chrome (border + left/right padding)
+/// that graphics are placed inside, in columns. Used to cap image/diagram width
+/// so they always fit the screen regardless of the (unreliable) terminal cell size.
+pub const CONTENT_H_INSET: u32 = VIEWPORT_BORDER_WIDTH + VIEWPORT_INNER_PADDING; // 6
+/// Vertical room (scroll content top/bottom padding + status bar safety) that
+/// graphics must stay clear of, in rows.
+pub const CONTENT_V_INSET: u32 = 4;
+
 // ── Debug overlay colors ──────────────────────────────────────────────────────
 pub const DBG_HEADING: Color = BLUE;
 pub const DBG_PARAGRAPH: Color = FG;

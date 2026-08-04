@@ -59,7 +59,7 @@ Note: Only works with nightly WezTerm on windows (since other versions do not ha
 
 ```bash
 # Download the binary
-curl -LO https://github.com/hessikaveh/rivas/releases/download/v0.3.2/rivas-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/hessikaveh/rivas/releases/download/v0.3.3/rivas-x86_64-unknown-linux-gnu.tar.gz
 
 # Extract and install
 tar -xzf rivas-x86_64-unknown-linux-gnu.tar.gz
@@ -87,6 +87,8 @@ rivas [OPTIONS] [FILE]
 | `--math <MODE>` | Math rendering mode: `unicode` (default) or `image`. Unicode works everywhere; image requires Kitty graphics. |
 | `--force-kitty` | Force Kitty graphics protocol even if the terminal is not auto-detected. Use if your terminal supports Kitty but isn't recognized. |
 | `-t, --theme <THEME>` | Color theme: `dark` (default) or `light`. |
+| `--cell-width <PX>` | Override the pixel width of a terminal cell. Graphics are shown at their natural size mapped onto this cell, so this grows/shrinks images, diagrams, and formulas. Use to correct a terminal whose `TIOCGWINSZ` pixel size is wrong (e.g., a secondary display). If only one axis is given, the other defaults to its standard value (16). |
+| `--cell-height <PX>` | Override the pixel height of a terminal cell (see `--cell-width`). If only one axis is given, the other defaults to 8. |
 | `--debug` | Enable debug logging and visual overlay annotations. |
 
 ### Math Modes
@@ -114,6 +116,24 @@ rivas --force-kitty --math image document.md
 This overrides the terminal detection and attempts Kitty graphics for images,
 diagrams, and image-mode math. If the terminal doesn't actually support the
 protocol, images and diagrams will simply not render.
+
+### Adjusting Graphic Sizes
+
+Images and diagrams render at their **natural size** (their own pixels mapped
+onto the terminal cell), shrinking if they would overflow the screen. If the
+automatic cell-size detection is wrong for your display, you can resize
+graphics two ways:
+
+- **At runtime** — in Normal/Visual mode press `[` to shrink or `]` to enlarge
+  every image, diagram, and formula, and see the result immediately:
+
+  ```
+  :q Quit | C-p Find | j/k Scroll | gg/G Top/Bottom | :math Math mode | 🔍 [ ]
+  ```
+
+- **From the CLI** — pin the cell size explicitly with `--cell-width` /
+  `--cell-height` (see the table above). This also changes the rasterization
+  resolution, so use it when you want sizing to be fixed ahead of time.
 
 ## Supported Markdown Notes
 

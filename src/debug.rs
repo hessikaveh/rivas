@@ -107,6 +107,15 @@ pub enum DebugEvent {
         blocks: usize,
         mode: String,
     },
+    #[serde(rename = "termcaps")]
+    TermCaps {
+        ts: u128,
+        cell_w: u16,
+        cell_h: u16,
+        overridden: bool,
+    },
+    #[serde(rename = "graphics_scale")]
+    GraphicsScale { ts: u128, scale: f32 },
     #[serde(rename = "image_load")]
     ImageLoad {
         ts: u128,

@@ -764,11 +764,25 @@ mod tests {
 
     #[test]
     fn estimate_paragraph_height_wraps() {
-        // 160 chars at wrap_width=80 → 2 rows
+        // 160 chars at content width = 80 - CONTENT_H_INSET(6) = 74 → 3 rows
         let long_text = "a".repeat(160);
         let block = Block::Paragraph {
             content: vec![Inline::Text(long_text)],
             span: (0, 160),
+        };
+        assert_eq!(estimate_block_height(&block, "", Some(80)), 3);
+    }
+
+    #[test]
+    fn estimate_paragraph_uses_content_inset() {
+        let block = Block::Paragraph {
+            content: vec![Inline::Text("a".repeat(74))],
+            span: (0, 74),
+        };
+        assert_eq!(estimate_block_height(&block, "", Some(80)), 1);
+        let block = Block::Paragraph {
+            content: vec![Inline::Text("a".repeat(75))],
+            span: (0, 75),
         };
         assert_eq!(estimate_block_height(&block, "", Some(80)), 2);
     }

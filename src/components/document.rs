@@ -252,6 +252,27 @@ pub fn Document(props: &DocumentProps, mut hooks: Hooks) -> impl Into<AnyElement
                 intent_from_key(code, ctrl, pending_g.get(), is_editing_mode);
             pending_g.set(new_pending_g);
 
+            // Live graphics size adjustment (Normal/Visual modes): resize every
+            // image / diagram / formula up or down and see the result at once.
+            if !is_editing_mode {
+                let delta = match code {
+                    KeyCode::Char('[') => Some(-0.25),
+                    KeyCode::Char(']') => Some(0.25),
+                    _ => None,
+                };
+                if let Some(delta) = delta {
+                    let next = crate::output::capabilities::graphics_scale() + delta;
+                    if crate::output::capabilities::set_graphics_scale(next) {
+                        crate::output::graphics_manager::refresh_graphics();
+                        tick.set(tick.get().wrapping_add(1));
+                        debug::log_event(&debug::DebugEvent::GraphicsScale {
+                            ts: debug::elapsed_ms(),
+                            scale: crate::output::capabilities::graphics_scale(),
+                        });
+                    }
+                }
+            }
+
             let old_scroll = scroll_handle.read().scroll_offset();
 
             if let ScrollIntent::None = intent { /* no-op */
