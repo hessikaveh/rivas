@@ -319,9 +319,7 @@ pub fn compute_scroll_into_view_target(
                 target = (block_top - top_margin).max(0);
             } else if effective_bottom > target + viewport_h {
                 let bottom_target = (effective_bottom - viewport_h).max(0);
-                if bottom_target < max_offset || target >= max_offset {
-                    target = bottom_target.min(max_offset);
-                }
+                target = bottom_target.min(max_offset);
             }
         }
     } else {
@@ -329,9 +327,7 @@ pub fn compute_scroll_into_view_target(
             target = (block_top - top_margin).max(0);
         } else if effective_bottom > target + viewport_h {
             let bottom_target = (effective_bottom - viewport_h).max(0);
-            if bottom_target < max_offset || target >= max_offset {
-                target = bottom_target.min(max_offset);
-            }
+            target = bottom_target.min(max_offset);
         }
     }
 
@@ -556,6 +552,25 @@ mod tests {
     fn scroll_into_view_block_below_viewport() {
         let result = compute_scroll_into_view_target(80, 90, 24, 200, 0, None, 0);
         assert_eq!(result, Some(66));
+    }
+
+    #[test]
+    fn scroll_into_view_at_end_of_doc_reaches_bottom() {
+        // Cursor on the last block, block bottom == content end. The viewport
+        // must still be able to scroll all the way to max_offset so the final
+        // rows are visible (previously the guard suppressed this, forcing the
+        // user to press `G`).
+        // content_h=100, viewport_h=10 -> max_offset=90.
+        let result = compute_scroll_into_view_target(92, 100, 10, 100, 60, Some(0), 2);
+        assert_eq!(result, Some(90));
+    }
+
+    #[test]
+    fn scroll_into_view_at_bottom_is_stable() {
+        // Already at max_offset; effective_bottom exceeds content end only
+        // because of the status-box overhang. Must not over-scroll (no change).
+        let result = compute_scroll_into_view_target(92, 100, 10, 100, 90, Some(0), 2);
+        assert_eq!(result, None);
     }
 
     #[test]
