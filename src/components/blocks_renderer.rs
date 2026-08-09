@@ -35,6 +35,10 @@ struct ScrollIntoViewContainerProps {
     /// Extra rows below the block content to keep visible (e.g. the status
     /// box showing "Ln X, Col Y: ...").
     pub bottom_offset: Option<i32>,
+    /// Identity of the block this container currently wraps (its block index).
+    /// Used to detect when the cursor jumps to a different block (e.g. `gg`) so
+    /// a stale baseline is never consumed.
+    pub block_identity: Option<i32>,
 }
 
 #[component]
@@ -44,9 +48,21 @@ fn ScrollIntoViewContainer(
 ) -> impl Into<AnyElement<'static>> {
     let rect = hooks.use_component_rect();
     let mut pending = hooks.use_state(|| false);
+    let mut baseline = hooks.use_state(|| None::<(i32, i32)>);
+    let mut last_rect_top = hooks.use_state(|| i32::MIN);
+    let mut last_block_identity = hooks.use_state(|| None::<i32>);
 
     if props.cursor_moved {
         pending.set(true);
+        // When the cursor jumps to a different block (e.g. `gg`), the stored
+        // baseline still describes the *previous* block; consuming it would yank
+        // the view to the old block's position. Invalidate it until the current
+        // block's rect settles (next frame); the effect below retries as soon as
+        // a valid baseline is re-captured.
+        if props.block_identity != last_block_identity.get() {
+            last_block_identity.set(props.block_identity);
+            baseline.set(None);
+        }
     }
 
     // Baseline invariant: `use_component_rect()` is measured from the *previous*
@@ -56,8 +72,6 @@ fn ScrollIntoViewContainer(
     // single frame. We capture the invariant only once `rect.top` actually
     // settles (changes), so a mid-flight stale rect never feeds a bogus target
     // and the auto-scroll converges in one step instead of oscillating.
-    let mut baseline = hooks.use_state(|| None::<(i32, i32)>);
-    let mut last_rect_top = hooks.use_state(|| i32::MIN);
     if let Some(r) = rect {
         if r.top != last_rect_top.get() {
             if let Some(scroll_ref) = &props.scroll_handle {
@@ -548,6 +562,7 @@ pub fn BlocksRenderer(
                                                                     child: Some(inner_factory),
                                                                     cursor_row: cursor_line_idx_siv.map(|r| r as i32),
                                                                     bottom_offset: Some(0),
+                                                                    block_identity: Some(i as i32),
                                                                 )
                                                             }.into_any()
                                                         } else {
@@ -571,6 +586,7 @@ pub fn BlocksRenderer(
                                 child: Some(factory),
                                 cursor_row: cursor_line_idx.map(|r| r as i32),
                                 bottom_offset: Some(0),
+                                block_identity: Some(i as i32),
                             )
                         }.into_any()
                     } else {
@@ -736,6 +752,7 @@ pub fn BlocksRenderer(
                                     child: Some(factory),
                                     cursor_row: cursor_line_idx.map(|r| r as i32),
                                     bottom_offset: Some(2),
+                                    block_identity: Some(i as i32),
                                 )
                             }.into_any()
                         } else {
