@@ -137,6 +137,51 @@ pie title Rendered Asset Types
   "Mermaid" : 30
 ```
 
+## Inline HTML
+
+Rivas renders the common inline HTML tags used in Mermaid labels and docs.
+
+<b>Bold via HTML</b>, <i>italic via HTML</i>, <u>underlined</u>,
+<s>strikethrough</s>, <strong>strong</strong>, <em>emphasis</em>, and
+<del>deleted</del>.
+
+<code>inline code</code> and <kbd>Ctrl</kbd>+<kbd>C</kbd>. Chemists love
+H<sub>2</sub>O; physicists write E=mc<sup>2</sup>.
+
+Line one<br>line two after a <br/> tag.
+
+An inline image via the HTML tag: <img src="../rivas.png" alt="Rivas logo">
+
+Unknown tags are hidden but their text is kept: <span>this content survives</span>.
+HTML comments are dropped: <!--this does not show-->.
+
+## HTML Blocks
+
+HTML blocks render their inner text with formatting applied:
+
+<div>
+  A <b>bold</b> and <i>italic</i> word inside a <code>div</code>, with a
+  <br>
+  line break.
+</div>
+
+A standalone HTML image tag renders as an image block:
+
+<img src="../rivas.png" alt="Rivas logo via img tag">
+
+HTML `<pre>`/`<code>` blocks render as real code blocks (with the language from
+`class="language-*"` where present):
+
+<pre><code class="language-rust">
+fn main() {
+    println!("Hello from an HTML code block");
+}
+</code></pre>
+
+<pre>
+No language declared, but the raw lines and indentation are preserved.
+</pre>
+
 ## Math
 
 Inline math should render in text flow: $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$.

@@ -120,6 +120,12 @@ pub enum Inline {
     Italic(Vec<Inline>),
     /// Strikethrough text (`~~...~~`).
     Strikethrough(Vec<Inline>),
+    /// Underlined text (`<u>...</u>` or `<ins>...</ins>`).
+    Underline(Vec<Inline>),
+    /// Subscript text (`<sub>...</sub>`), rendered as Unicode subscripts.
+    Subscript(Vec<Inline>),
+    /// Superscript text (`<sup>...</sup>`), rendered as Unicode superscripts.
+    Superscript(Vec<Inline>),
     /// Inline code (`` `...` ``).
     Code(String),
     /// Inline math (`$...$`).
@@ -149,9 +155,12 @@ pub fn inlines_to_text(inlines: &[Inline]) -> String {
         match i {
             Inline::Text(t) => s.push_str(t),
             Inline::Code(c) | Inline::Math(c) => s.push_str(c),
-            Inline::Bold(ch) | Inline::Italic(ch) | Inline::Strikethrough(ch) => {
-                s.push_str(&inlines_to_text(ch))
-            }
+            Inline::Bold(ch)
+            | Inline::Italic(ch)
+            | Inline::Strikethrough(ch)
+            | Inline::Underline(ch)
+            | Inline::Subscript(ch)
+            | Inline::Superscript(ch) => s.push_str(&inlines_to_text(ch)),
             Inline::Link { text, .. } => s.push_str(&inlines_to_text(text)),
             Inline::SoftBreak => s.push(' '),
             Inline::HardBreak => s.push('\n'),

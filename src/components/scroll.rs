@@ -1,4 +1,5 @@
 use crate::document::model::{Block, inlines_to_text};
+use crate::document::parser::parse_html_fragment;
 use crate::output::graphics_manager::IMAGE_HEIGHT_CACHE;
 use crate::theme;
 use iocraft::prelude::KeyCode;
@@ -220,7 +221,18 @@ pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u
                 .map(|(_, h)| h)
                 .unwrap_or(5)
         }
-        Block::Html { content, .. } => content.lines().count() as u32,
+        Block::Html { content, .. } => {
+            // Renders as a wrapping text flow (like a paragraph), so estimate
+            // from the parsed fragment rather than the raw source lines.
+            let inlines = parse_html_fragment(content);
+            let text = inlines_to_text(&inlines);
+            text.split('\n')
+                .map(|line| {
+                    ((line.chars().count() as f32 / wrap_width as f32).ceil() as u32).max(1)
+                })
+                .sum::<u32>()
+                .max(1)
+        }
     }
 }
 
