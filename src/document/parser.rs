@@ -78,6 +78,9 @@ fn parse_inlines_until(
     stop: StopCondition,
 ) -> Vec<Inline> {
     let mut inlines = Vec::new();
+    // Stack of open inline HTML tags. Each entry records where in `inlines`
+    // the tag's content begins, the style to apply on close, and the tag name.
+    let mut html_stack: Vec<(usize, Option<HtmlStyle>, String)> = Vec::new();
     while *pos < events.len() {
         match &events[*pos].0 {
             // ── Leaf inline events ──────────────────────────────────────
@@ -101,8 +104,9 @@ fn parse_inlines_until(
                 inlines.push(Inline::HardBreak);
                 *pos += 1;
             }
-            Event::InlineHtml(_) => {
-                *pos += 1; // ignore
+            Event::InlineHtml(html) => {
+                handle_html_tag(html.as_ref(), &mut inlines, &mut html_stack);
+                *pos += 1;
             }
 
             // ── Nested inline tags (always recurse with OnEndTag) ───────
@@ -153,6 +157,341 @@ fn parse_inlines_until(
         }
     }
     inlines
+}
+
+// ── HTML tag handling ───────────────────────────────────────────────────────
+
+/// Styling that a supported inline HTML tag should apply to its content.
+#[derive(Clone, Copy, PartialEq)]
+enum HtmlStyle {
+    Bold,
+    Italic,
+    Underline,
+    Strike,
+    Sub,
+    Sup,
+    Code,
+}
+
+/// A single parsed HTML tag, e.g. `<b class="x">`, `</b>`, `<br/>`, `<img …>`.
+struct HtmlTag {
+    name: String,
+    closing: bool,
+    self_closing: bool,
+    attrs: String,
+}
+
+/// Map a lowercased tag name to the inline style it applies. Unknown tags get
+/// `None`: their content is kept but the tags themselves are stripped.
+fn html_style(name: &str) -> Option<HtmlStyle> {
+    match name {
+        "b" | "strong" => Some(HtmlStyle::Bold),
+        "i" | "em" => Some(HtmlStyle::Italic),
+        "u" | "ins" => Some(HtmlStyle::Underline),
+        "s" | "del" | "strike" => Some(HtmlStyle::Strike),
+        "sub" => Some(HtmlStyle::Sub),
+        "sup" => Some(HtmlStyle::Sup),
+        "code" | "kbd" => Some(HtmlStyle::Code),
+        _ => None,
+    }
+}
+
+/// Wraps a run of inlines in the `Inline` node described by `style`.
+fn wrap_html_style(style: HtmlStyle, children: Vec<Inline>) -> Inline {
+    match style {
+        HtmlStyle::Bold => Inline::Bold(children),
+        HtmlStyle::Italic => Inline::Italic(children),
+        HtmlStyle::Underline => Inline::Underline(children),
+        HtmlStyle::Strike => Inline::Strikethrough(children),
+        HtmlStyle::Sub => Inline::Subscript(children),
+        HtmlStyle::Sup => Inline::Superscript(children),
+        HtmlStyle::Code => Inline::Code(inlines_to_text(&children).trim().to_string()),
+    }
+}
+
+/// Parses a raw `<…>` tag string into its parts. Returns `None` for comments,
+/// processing instructions, CDATA, or otherwise malformed input that should be
+/// dropped entirely.
+fn parse_html_tag(raw: &str) -> Option<HtmlTag> {
+    let r = raw.trim();
+    if !r.starts_with('<') || !r.ends_with('>') {
+        return None;
+    }
+    let inner = &r[1..r.len() - 1];
+    let mut rest = inner.trim();
+    if rest.starts_with('!') || rest.starts_with('?') {
+        return None;
+    }
+    let closing = rest.starts_with('/');
+    if closing {
+        rest = rest[1..].trim_start();
+    }
+    let mut name = String::new();
+    for c in rest.chars() {
+        if c.is_ascii_alphanumeric() || c == ':' || c == '-' {
+            name.push(c.to_ascii_lowercase());
+        } else {
+            break;
+        }
+    }
+    if name.is_empty() {
+        return None;
+    }
+    let mut attrs = rest[name.len()..].trim();
+    let self_closing = attrs.ends_with('/');
+    attrs = attrs.trim_end_matches('/').trim();
+    Some(HtmlTag {
+        name,
+        closing,
+        self_closing,
+        attrs: attrs.to_string(),
+    })
+}
+
+/// Handles a single inline HTML tag against a linear inline stream with a
+/// stack of open tags. Each open tag records the inline index its content
+/// begins at; the matching close tag wraps that range into a styled node.
+/// Unknown tags (style `None`) are transparent: opening records a stack entry
+/// and closing just pops it, leaving the content inline.
+///
+/// Returns `true` when the tag emits a hard line break (`<br>`), so fragment
+/// callers can collapse whitespace at the start of the following line.
+fn handle_html_tag(
+    tag_raw: &str,
+    inlines: &mut Vec<Inline>,
+    stack: &mut Vec<(usize, Option<HtmlStyle>, String)>,
+) -> bool {
+    let Some(tag) = parse_html_tag(tag_raw) else {
+        return false;
+    };
+    if tag.closing {
+        if let Some((_, _, top_name)) = stack.last()
+            && *top_name == tag.name
+        {
+            let (marker, style, _) = stack.pop().unwrap();
+            if let Some(style) = style {
+                let children: Vec<Inline> = inlines.drain(marker..).collect();
+                inlines.push(wrap_html_style(style, children));
+            }
+        }
+        return false;
+    }
+    match tag.name.as_str() {
+        "br" => {
+            inlines.push(Inline::HardBreak);
+            return true;
+        }
+        "img" => {
+            if let Some(url) = extract_attr(&tag.attrs, "src") {
+                let alt = extract_attr(&tag.attrs, "alt").unwrap_or_default();
+                inlines.push(Inline::Image { alt, url });
+            }
+            return false;
+        }
+        "hr" => return false,
+        _ => {}
+    }
+    if tag.self_closing {
+        return false;
+    }
+    stack.push((inlines.len(), html_style(&tag.name), tag.name));
+    false
+}
+
+/// Pulls the value of a named attribute out of a tag's attribute string.
+fn extract_attr(attrs: &str, name: &str) -> Option<String> {
+    let low = attrs.to_lowercase();
+    let mut idx = 0;
+    let bytes = low.as_bytes();
+    while idx < bytes.len() {
+        while idx < bytes.len() && (bytes[idx].is_ascii_whitespace() || bytes[idx] == b'/') {
+            idx += 1;
+        }
+        let start = idx;
+        while idx < bytes.len() && (bytes[idx].is_ascii_alphanumeric() || bytes[idx] == b'-') {
+            idx += 1;
+        }
+        if idx == start {
+            idx += 1;
+            continue;
+        }
+        let attr_name = &low[start..idx];
+        idx += bytes[idx..]
+            .iter()
+            .take_while(|c| c.is_ascii_whitespace())
+            .count();
+        if attr_name == name && bytes.get(idx) == Some(&b'=') {
+            idx += 1;
+            // skip to the value
+            while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+                idx += 1;
+            }
+            if bytes.get(idx) == Some(&b'"') || bytes.get(idx) == Some(&b'\'') {
+                let q = bytes[idx];
+                let start = idx + 1;
+                idx = start;
+                while idx < bytes.len() && bytes[idx] != q {
+                    idx += 1;
+                }
+                return Some(decode_entities(&attrs[start..idx]));
+            } else {
+                let start = idx;
+                while idx < bytes.len() && !bytes[idx].is_ascii_whitespace() && bytes[idx] != b'>' {
+                    idx += 1;
+                }
+                return Some(decode_entities(&attrs[start..idx]));
+            }
+        }
+        // skip past this attribute's value before scanning the next one
+        while idx < bytes.len() && bytes[idx] != b'=' && !bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if bytes.get(idx) == Some(&b'=') {
+            idx += 1;
+            if bytes.get(idx) == Some(&b'"') || bytes.get(idx) == Some(&b'\'') {
+                let q = bytes[idx];
+                idx += 1;
+                while idx < bytes.len() && bytes[idx] != q {
+                    idx += 1;
+                }
+                idx += 1;
+            } else {
+                while idx < bytes.len() && !bytes[idx].is_ascii_whitespace() {
+                    idx += 1;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Decodes the small set of HTML entities that commonly appear in short
+/// snippets. Anything unrecognized is left as-is.
+fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let tail = &rest[amp..];
+        let Some(semi) = tail.find(';') else {
+            out.push_str(tail);
+            return out;
+        };
+        let entity = &tail[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some('\u{A0}'),
+            _ => None,
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &tail[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Parses a raw HTML fragment string (e.g. the content of an HTML block) into
+/// inline Markdown nodes, applying the supported formatting tags and stripping
+/// everything else so the inner text remains visible.
+pub fn parse_html_fragment(raw: &str) -> Vec<Inline> {
+    let mut inlines = Vec::new();
+    let mut stack: Vec<(usize, Option<HtmlStyle>, String)> = Vec::new();
+    let mut at_line_start = true;
+    let mut rest = raw;
+    while let Some(lt) = rest.find('<') {
+        push_fragment_text(&mut inlines, &rest[..lt], &mut at_line_start);
+        let after = &rest[lt..];
+        match after.find('>') {
+            Some(gt) => {
+                let tag_raw = &after[..=gt];
+                rest = &after[gt + 1..];
+                if handle_html_tag(tag_raw, &mut inlines, &mut stack) {
+                    at_line_start = true;
+                }
+            }
+            None => {
+                push_fragment_text(&mut inlines, after, &mut at_line_start);
+                break;
+            }
+        }
+    }
+    if !rest.is_empty() {
+        push_fragment_text(&mut inlines, rest, &mut at_line_start);
+    }
+    trim_fragment_edges(inlines)
+}
+
+/// Drops leading/trailing whitespace-only text and line breaks that HTML block
+/// formatting leaves around block-level tags such as `<div>` or `<center>`,
+/// and trims stray edge whitespace from the first/last text nodes.
+fn trim_fragment_edges(mut inlines: Vec<Inline>) -> Vec<Inline> {
+    let is_padding = |i: &Inline| match i {
+        Inline::HardBreak | Inline::SoftBreak => true,
+        Inline::Text(t) => t.trim().is_empty(),
+        _ => false,
+    };
+    while inlines.first().map(is_padding).unwrap_or(false) {
+        inlines.remove(0);
+    }
+    while inlines.last().map(is_padding).unwrap_or(false) {
+        inlines.pop();
+    }
+    if let Some(Inline::Text(t)) = inlines.first_mut() {
+        *t = t.trim_start().to_string();
+    }
+    if let Some(Inline::Text(t)) = inlines.last_mut() {
+        *t = t.trim_end().to_string();
+    }
+    inlines
+}
+
+/// Appends a decoded HTML text chunk, collapsing runs of whitespace (including
+/// newlines) to a single space — HTML block whitespace semantics. Newlines in
+/// the raw block therefore do not each become a hard break; only explicit
+/// `<br>` tags (handled by `handle_html_tag`) do. A single trailing space is
+/// kept so text preceding an inline element stays separated (e.g. `A
+/// <b>bold</b>` -> `A bold`), while leading whitespace only becomes a space
+/// when the chunk is not at the start of a line (after a `<br>` or fragment
+/// start).
+fn push_fragment_text(inlines: &mut Vec<Inline>, text: &str, at_line_start: &mut bool) {
+    let decoded = decode_entities(text);
+    if decoded.is_empty() {
+        return;
+    }
+    let mut current = String::new();
+    let mut pending_space = false;
+    for c in decoded.chars() {
+        if c.is_whitespace() {
+            if !current.is_empty() || !*at_line_start {
+                pending_space = true;
+            }
+        } else {
+            if pending_space {
+                pending_space = false;
+                current.push(' ');
+            }
+            current.push(c);
+        }
+    }
+    if !current.is_empty() && pending_space {
+        current.push(' ');
+    }
+    if !current.is_empty() {
+        *at_line_start = false;
+        inlines.push(Inline::Text(current));
+    }
 }
 
 /// Parse inline events until the matching End tag (the standard entry point).
@@ -326,12 +665,186 @@ fn parse_block_tag(
                 span: (start_offset, end_offset),
             })
         }
+        Tag::HtmlBlock => {
+            let (content, end_offset) = collect_html_block(events, pos);
+            Some(html_fragment_to_block(content, (start_offset, end_offset)))
+        }
 
         _ => {
             skip_to_end(events, pos);
             None
         }
     }
+}
+
+/// Collects every `Html` event that makes up an HTML block (one event per line,
+/// including trailing newlines), consuming through the matching `End` event.
+fn collect_html_block(events: &[(Event, Range<usize>)], pos: &mut usize) -> (String, usize) {
+    let mut s = String::new();
+    let mut end_offset = 0;
+    while *pos < events.len() {
+        match &events[*pos].0 {
+            Event::Html(h) => {
+                s.push_str(h.as_ref());
+                end_offset = events[*pos].1.end;
+                *pos += 1;
+            }
+            Event::End(_) => {
+                end_offset = events[*pos].1.end;
+                *pos += 1;
+                break;
+            }
+            _ => {
+                *pos += 1;
+            }
+        }
+    }
+    (s, end_offset)
+}
+
+/// True for the block-level HTML tags whose content is treated as verbatim
+/// preformatted text. Anything inside clever `/`-free `code` isn't included;
+/// the generic wrappers handled are `div` and `p`.
+fn is_html_code_wrapper(name: &str) -> bool {
+    matches!(name, "pre" | "code" | "samp" | "kbd")
+}
+
+/// Reads a language (if any) out of an HTML tag's attributes, following the
+/// `class="language-…"` convention used by syntax highlighters.
+fn language_from_html_attrs(attrs: &str) -> Option<String> {
+    let mut rest = attrs;
+    loop {
+        let Some(ci) = rest.find("class") else {
+            return None;
+        };
+        let after = rest[ci + "class".len()..].trim_start();
+        let Some(after_eq) = after.strip_prefix('=') else {
+            rest = after;
+            continue;
+        };
+        let after_eq = after_eq.trim_start();
+        let mut chars = after_eq.chars();
+        let Some(quote) = chars.next() else {
+            return None;
+        };
+        if quote != '"' && quote != '\'' {
+            return None;
+        }
+        let inner = &after_eq[1..];
+        let Some(end) = inner.find(quote) else {
+            return None;
+        };
+        for tok in inner[..end].split_whitespace() {
+            if let Some(lang) = tok.strip_prefix("language-") {
+                if !lang.is_empty() {
+                    return Some(lang.to_string());
+                }
+            }
+        }
+        return None;
+    }
+}
+
+/// Recovers a preformatted code block from an HTML fragment that consists
+/// solely of balanced `<pre>`/`<code>` tags — optionally wrapped in `<div>` or
+/// `<p>` — with no other markup. Returns the verbatim inner text (with
+/// newlines and indentation preserved, entities decoded) and the language from
+/// the `<code>` tag's `class="language-*"`. Returns `None` for anything that
+/// is not a clean preformatted block.
+fn html_fragment_to_preformatted(content: &str) -> Option<(String, Option<String>)> {
+    let mut rest = content.trim();
+    let mut stack: Vec<String> = Vec::new();
+    let mut is_code = false;
+    let mut language = None;
+    loop {
+        if !rest.starts_with('<') {
+            break;
+        }
+        let Some(gt) = rest.find('>') else {
+            break;
+        };
+        let tag = parse_html_tag(&rest[..=gt])?;
+        if tag.closing || tag.self_closing {
+            break;
+        }
+        if is_html_code_wrapper(&tag.name) {
+            is_code = true;
+            if tag.name == "code" {
+                language = language_from_html_attrs(&tag.attrs);
+            }
+        } else if tag.name != "div" && tag.name != "p" {
+            break;
+        }
+        stack.push(tag.name.clone());
+        rest = &rest[gt + 1..];
+    }
+    if stack.is_empty() || !is_code {
+        return None;
+    }
+    // The remainder must close the wrappers innermost-first, with only
+    // whitespace between consecutive closing tags.
+    let mut inner_end = None;
+    let mut i = 0usize;
+    let mut is_first = true;
+    loop {
+        if stack.is_empty() {
+            break;
+        }
+        let Some(lt) = rest[i..].find("</") else {
+            return None;
+        };
+        let lt = i + lt;
+        if !is_first && !rest[i..lt].chars().all(|c| c.is_whitespace()) {
+            return None;
+        }
+        if is_first {
+            inner_end = Some(lt);
+        }
+        let after = &rest[lt..];
+        let Some(gt) = after.find('>') else {
+            return None;
+        };
+        let tag = parse_html_tag(&after[..=gt])?;
+        let expected = stack.pop()?;
+        if !tag.closing || tag.name != expected {
+            return None;
+        }
+        i = lt + gt + 1;
+        is_first = false;
+    }
+    if !rest[i..].trim().is_empty() {
+        return None;
+    }
+    let inner = &rest[..inner_end?];
+    Some((decode_entities(inner.trim()), language))
+}
+
+/// Converts an HTML block's raw content into a block. A fragment that consists
+/// of a single `<img>` tag is promoted to a [`Block::Image`] so it renders
+/// through the image pipeline (Kitty graphics) instead of as plain text. A
+/// fragment wrapped in balanced `<pre>`/`<code>` tags becomes a [`Block::Code`]
+/// so it renders as a real code block with syntax language support. Anything
+/// else keeps its formatting via [`parse_html_fragment`].
+fn html_fragment_to_block(content: String, span: (usize, usize)) -> Block {
+    let inlines = parse_html_fragment(&content);
+    if inlines.len() == 1
+        && let Inline::Image { alt, url } = &inlines[0]
+    {
+        return Block::Image {
+            alt: alt.clone(),
+            url: url.clone(),
+            title: None,
+            span,
+        };
+    }
+    if let Some((code, language)) = html_fragment_to_preformatted(&content) {
+        return Block::Code {
+            language,
+            code,
+            span,
+        };
+    }
+    Block::Html { content, span }
 }
 
 /// Parse a list and its items.
@@ -659,5 +1172,286 @@ $$
         } else {
             panic!("Expected Paragraph with Strikethrough");
         }
+    }
+
+    #[test]
+    fn inline_html_bold() {
+        let doc = parse_markdown("a <b>bold</b> b");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(content.iter().any(|i| matches!(i, Inline::Bold(_))));
+            let text = inlines_to_text(content);
+            assert_eq!(text, "a bold b");
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_italic() {
+        let doc = parse_markdown("a <i>italic</i> b");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(content.iter().any(|i| matches!(i, Inline::Italic(_))));
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_underline() {
+        let doc = parse_markdown("<u>under</u>");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(content.iter().any(|i| matches!(i, Inline::Underline(_))));
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_strike() {
+        let doc = parse_markdown("<s>gone</s> and <del>del</del>");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(
+                content
+                    .iter()
+                    .any(|i| matches!(i, Inline::Strikethrough(_)))
+            );
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_break() {
+        let doc = parse_markdown("line1<br>line2");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(content.iter().any(|i| matches!(i, Inline::HardBreak)));
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_code() {
+        let doc = parse_markdown("a <code>x + 1</code> b");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(
+                content
+                    .iter()
+                    .any(|i| matches!(i, Inline::Code(c) if c == "x + 1"))
+            );
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_sup_sub() {
+        let doc = parse_markdown("H<sub>2</sub>O e<sup>x</sup>");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(content.iter().any(|i| matches!(i, Inline::Subscript(_))));
+            assert!(content.iter().any(|i| matches!(i, Inline::Superscript(_))));
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_nested() {
+        let doc = parse_markdown("<b>big <i>and nested</i></b>");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            let has_nested = content.iter().any(|i| match i {
+                Inline::Bold(ch) => ch.iter().any(|c| matches!(c, Inline::Italic(_))),
+                _ => false,
+            });
+            assert!(
+                has_nested,
+                "Expected nested bold/italic, got: {:?}",
+                content
+            );
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_img() {
+        let doc = parse_markdown("see <img src=\"img.png\" alt=\"pic\"> now");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            assert!(content.iter().any(|i| matches!(
+                i,
+                Inline::Image { alt, url } if alt == "pic" && url == "img.png"
+            )));
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn inline_html_unknown_stripped() {
+        let doc = parse_markdown("a <span>kept</span> b <!--hidden--> c");
+        if let Block::Paragraph { content, .. } = &doc.blocks[0] {
+            let text = inlines_to_text(content);
+            assert_eq!(text, "a kept b  c");
+            let flat = inlines_to_text(content);
+            assert!(
+                !flat.contains("hidden"),
+                "HTML comment should be dropped, got: {}",
+                flat
+            );
+        } else {
+            panic!("Expected Paragraph");
+        }
+    }
+
+    #[test]
+    fn html_fragment_block() {
+        let inlines = parse_html_fragment("<div>\n<b>Bold</b> and <i>italics</i>\n</div>");
+        let text = inlines_to_text(&inlines);
+        assert_eq!(text, "Bold and italics");
+        assert!(inlines.iter().any(|i| matches!(i, Inline::Bold(_))));
+    }
+
+    #[test]
+    fn html_fragment_entities() {
+        let inlines = parse_html_fragment("a &amp; b &lt;c&gt;");
+        let text = inlines_to_text(&inlines);
+        assert_eq!(text, "a & b <c>");
+    }
+
+    #[test]
+    fn html_block_is_not_dropped() {
+        let doc = parse_markdown("<div>\n  <b>Bold</b> inside\n</div>\n");
+        assert!(
+            matches!(&doc.blocks[0], Block::Html { .. }),
+            "expected HTML block, got: {:?}",
+            doc.blocks[0]
+        );
+        if let Block::Html { content, .. } = &doc.blocks[0] {
+            let inlines = parse_html_fragment(content);
+            assert_eq!(inlines_to_text(&inlines), "Bold inside");
+            assert!(inlines.iter().any(|i| matches!(i, Inline::Bold(_))));
+        }
+    }
+
+    #[test]
+    fn standalone_html_img_promotes_to_image_block() {
+        let doc = parse_markdown("<img src=\"rivas.png\" alt=\"logo\">\n");
+        match &doc.blocks[0] {
+            Block::Image { alt, url, span, .. } => {
+                assert_eq!(url, "rivas.png");
+                assert_eq!(alt, "logo");
+                assert_eq!(span, &(0, 33));
+            }
+            other => panic!("Expected Block::Image, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn self_closing_html_img_promotes_to_image_block() {
+        let doc = parse_markdown("<img src=\"rivas.png\"/>\n");
+        match &doc.blocks[0] {
+            Block::Image { url, .. } => assert_eq!(url, "rivas.png"),
+            other => panic!("Expected Block::Image, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_block_follows_paragraph() {
+        let doc = parse_markdown("<div>hi</div>\n\nnext para\n");
+        assert_eq!(
+            doc.blocks.len(),
+            2,
+            "expected 2 blocks, got: {:?}",
+            doc.blocks
+        );
+        assert!(matches!(&doc.blocks[0], Block::Html { .. }));
+        assert!(matches!(&doc.blocks[1], Block::Paragraph { .. }));
+    }
+
+    #[test]
+    fn html_code_block_promotes_to_code_block() {
+        let doc = parse_markdown("<pre><code>\nfn main() {}\n</code></pre>\n");
+        match &doc.blocks[0] {
+            Block::Code { language, code, .. } => {
+                assert_eq!(code, "fn main() {}");
+                assert_eq!(language, &None);
+            }
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_code_block_with_language_class() {
+        let doc =
+            parse_markdown("<pre><code class=\"language-rust\">\nfn main() {}\n</code></pre>\n");
+        match &doc.blocks[0] {
+            Block::Code { language, code, .. } => {
+                assert_eq!(language.as_deref(), Some("rust"));
+                assert_eq!(code, "fn main() {}");
+            }
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_code_block_keeps_newlines() {
+        let doc = parse_markdown("<pre><code>\nline one\nline two\n</code></pre>\n");
+        match &doc.blocks[0] {
+            Block::Code { code, .. } => assert_eq!(code, "line one\nline two"),
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_pre_alone_becomes_code_block() {
+        let doc = parse_markdown("<pre>\nraw line\n</pre>\n");
+        match &doc.blocks[0] {
+            Block::Code { code, language, .. } => {
+                assert_eq!(code, "raw line");
+                assert_eq!(language, &None);
+            }
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_code_without_pre_becomes_code_block() {
+        let doc = parse_markdown("<code>\nhello\n</code>\n");
+        match &doc.blocks[0] {
+            Block::Code { code, .. } => assert_eq!(code, "hello"),
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_div_wrapped_code_block() {
+        let doc =
+            parse_markdown("<div><pre><code class=\"language-python\">x = 1</code></pre></div>\n");
+        match &doc.blocks[0] {
+            Block::Code { code, language, .. } => {
+                assert_eq!(code, "x = 1");
+                assert_eq!(language.as_deref(), Some("python"));
+            }
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_code_block_decodes_entities() {
+        let doc = parse_markdown("<pre><code>a &lt; b &amp;&amp; c &gt; d</code></pre>\n");
+        match &doc.blocks[0] {
+            Block::Code { code, .. } => assert_eq!(code, "a < b && c > d"),
+            other => panic!("Expected Block::Code, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn html_div_with_text_stays_html() {
+        let doc = parse_markdown("<div>hi</div>\n");
+        assert!(
+            matches!(&doc.blocks[0], Block::Html { .. }),
+            "expected HTML block, got: {:?}",
+            doc.blocks[0]
+        );
     }
 }

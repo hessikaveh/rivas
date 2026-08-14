@@ -605,7 +605,7 @@ pub fn BlocksRenderer(
                             Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path.clone(), viewport: props.viewport.clone())}.into_any(),
                             Block::ThematicBreak{..} => element!{ThematicBreak()}.into_any(),
                             Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path.clone(), title: title.clone(), alt: Some(alt.clone()), viewport: props.viewport.clone())}.into_any(),
-                            Block::Html { content, .. } => element!{HtmlBlock(content: content.clone())}.into_any(),
+                            Block::Html { content, .. } => element!{HtmlBlock(content: content.clone(), file_path: Some(file_path.clone()), viewport: props.viewport.clone())}.into_any(),
                         };
 
                         // Wrap with debug border/label if debug annotations are enabled
@@ -713,7 +713,7 @@ pub fn BlocksRenderer(
                                     Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path_clone.clone(), viewport: viewport_clone.clone())}.into_any(),
                                     Block::ThematicBreak{..} => element!{ThematicBreak()}.into_any(),
                                     Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path_clone.clone(), title: title.clone(), alt: Some(alt.clone()), viewport: viewport_clone.clone())}.into_any(),
-                                    Block::Html { content, .. } => element!{HtmlBlock(content: content.clone())}.into_any(),
+                                    Block::Html { content, .. } => element!{HtmlBlock(content: content.clone(), file_path: Some(file_path_clone.clone()), viewport: viewport_clone.clone())}.into_any(),
                                 };
 
                                 element! {

@@ -540,6 +540,13 @@ fn map_script(ch: char, sup: bool) -> char {
     }
 }
 
+/// Converts a plain string to Unicode subscript or superscript glyphs,
+/// keeping any character that has no script variant as-is. Used to render
+/// HTML `<sub>`/`<sup>` tags in a terminal.
+pub(crate) fn scripts_to_unicode(s: &str, sup: bool) -> String {
+    s.chars().map(|c| map_script(c, sup)).collect()
+}
+
 /// Reads the argument of a `^`/`_` operator starting at `idx`: a `{...}` group,
 /// a `\command`, or a single character. Returns `(content_start, content_end,
 /// skip_to)` where `[content_start, content_end)` is the argument text (without
