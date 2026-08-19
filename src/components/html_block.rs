@@ -1,4 +1,6 @@
+use crate::components::highlight::{HTML, UseHighlight};
 use crate::components::inline_renderer::render_inlines;
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::components::scroll::Viewport;
 use crate::document::parser::parse_html_fragment;
 use crate::theme;
@@ -14,12 +16,27 @@ pub struct HtmlBlockProps {
     pub file_path: Option<PathBuf>,
     /// Optional viewport dimensions for responsive image rendering.
     pub viewport: Option<Viewport>,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
 
 /// Renders an HTML block by parsing its content with the supported inline
 /// HTML tags and showing the resulting text, stripping everything else.
 #[component]
-pub fn HtmlBlock(props: &HtmlBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
+pub fn HtmlBlock(props: &HtmlBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
+    let highlighted = hooks.use_cached_highlight(source, HTML, theme::FG);
+
+    if let Some(mut raw) = props.raw.clone() {
+        raw.highlight = Some(highlighted);
+        return element! {
+            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                RawBuffer(raw: raw, color: theme::FG)
+            }
+        }
+        .into_any();
+    }
+
     let inlines = parse_html_fragment(&props.content);
     let styled_elements = render_inlines(
         &inlines,
@@ -35,4 +52,5 @@ pub fn HtmlBlock(props: &HtmlBlockProps, _hooks: Hooks) -> impl Into<AnyElement<
             #(styled_elements)
         }
     }
+    .into_any()
 }

@@ -1,6 +1,8 @@
 use crate::assets::math::{
     MathMode, MathRender, bracket_glyphs, math_mode, render_math_unicode_ast,
 };
+use crate::components::highlight::{LATEX, UseHighlight};
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::components::scroll::{ScrollPosition, Viewport};
 use crate::debug;
 use crate::output::graphics_manager::{
@@ -29,13 +31,26 @@ pub struct MathBlockProps {
     pub display: bool,
     /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
 
 /// Renders a LaTeX math block using either Unicode text or Kitty graphics,
 /// depending on the current math mode setting.
 #[component]
-pub fn MathBlock(props: &MathBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    if math_mode() == MathMode::Image {
+pub fn MathBlock(props: &MathBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
+    let highlighted = hooks.use_cached_highlight(source, LATEX, theme::CYAN);
+
+    if let Some(mut raw) = props.raw.clone() {
+        raw.highlight = Some(highlighted);
+        element! {
+            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                RawBuffer(raw: raw, color: theme::CYAN)
+            }
+        }
+        .into_any()
+    } else if math_mode() == MathMode::Image {
         element! {
             View(margin_bottom: 1) {
                 KittyMath(content: props.content.clone(), display: props.display.clone(), viewport: props.viewport.clone())

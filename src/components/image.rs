@@ -1,3 +1,4 @@
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::components::scroll::{ScrollPosition, Viewport};
 use crate::debug;
 use crate::output::capabilities;
@@ -32,6 +33,8 @@ pub struct ImageProps {
     pub alt: Option<String>,
     /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
 
 /// Renders an inline image, using Kitty graphics protocol if available,
@@ -39,12 +42,27 @@ pub struct ImageProps {
 #[component]
 pub fn Image(props: &ImageProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let label = props.alt.as_deref().unwrap_or(&props.url);
+    let raw = props.raw.clone();
+
+    // With the cursor on the block in Normal mode we keep the rendered graphic
+    // visible and show the raw source line underneath. Without kitty graphics
+    // there is no picture to preserve (only the `[Image: …]` label), so fall
+    // back to the source editor alone, matching the other text blocks.
+    if raw.is_some() && !capabilities::has_kitty() {
+        return element! {
+            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                RawBuffer(raw: raw.unwrap(), color: theme::FG)
+            }
+        }
+        .into_any();
+    }
+
     element! {
         View(flex_direction: FlexDirection::Column, margin_bottom: 1) {
             #(props.title.clone().map(|title| element! {
-            View() {
-                Text(content: title, color: theme::COMMENT)
-            }
+                View() {
+                    Text(content: title, color: theme::COMMENT)
+                }
             }))
             #(if capabilities::has_kitty() {
                 Some(element! {
@@ -55,8 +73,14 @@ pub fn Image(props: &ImageProps, _hooks: Hooks) -> impl Into<AnyElement<'static>
                     Text(content: format!("[Image: {}]", label), color: theme::COMMENT)
                 }.into_any())
             })
+            #(raw.map(|r| element! {
+                View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                    RawBuffer(raw: r, color: theme::FG)
+                }
+            }))
         }
     }
+    .into_any()
 }
 
 /// Properties for the [`KittyImage`] component.

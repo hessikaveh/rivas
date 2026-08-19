@@ -1,12 +1,7 @@
+use crate::components::highlight::UseHighlight;
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::theme;
 use iocraft::prelude::*;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::sync::LazyLock;
-use syntect::{easy::HighlightLines, highlighting::ThemeSet, parsing::SyntaxSet};
-
-static SS: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_nonewlines);
-static TS: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 /// Properties for the [`CodeBlock`] component.
 #[derive(Default, Props)]
@@ -15,6 +10,8 @@ pub struct CodeBlockProps {
     pub language: Option<String>,
     /// The source code content to render.
     pub code: String,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
 
 /// Renders a syntax-highlighted fenced code block.
@@ -25,69 +22,40 @@ pub struct CodeBlockProps {
 pub fn CodeBlock(props: &CodeBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let lang_label = props.language.clone().unwrap_or_else(|| "code".to_string());
 
-    let mut highlighted = hooks.use_ref(|| Vec::<Vec<(String, Color)>>::new());
-    let mut prev_hash = hooks.use_ref(|| 0u64);
-
-    let new_hash = {
-        let mut hasher = DefaultHasher::new();
-        props.language.hash(&mut hasher);
-        props.code.hash(&mut hasher);
-        hasher.finish()
-    };
-
-    if *prev_hash.read() != new_hash {
-        prev_hash.set(new_hash);
-
-        let syntax = props
-            .language
-            .as_deref()
-            .and_then(|l| SS.find_syntax_by_token(l))
-            .unwrap_or_else(|| SS.find_syntax_plain_text());
-        let theme = &TS.themes["base16-ocean.dark"];
-        let mut highlighter = HighlightLines::new(syntax, theme);
-
-        let mut lines = Vec::new();
-        for line in props.code.lines() {
-            match highlighter.highlight_line(line, &SS) {
-                Ok(regions) => {
-                    let spans = regions
-                        .iter()
-                        .map(|(style, text)| {
-                            let color = Color::Rgb {
-                                r: style.foreground.r,
-                                g: style.foreground.g,
-                                b: style.foreground.b,
-                            };
-                            (text.to_string(), color)
-                        })
-                        .collect();
-                    lines.push(spans);
-                }
-                Err(_) => {
-                    lines.push(vec![(line.to_string(), theme::FG)]);
-                }
-            }
-        }
-        highlighted.set(lines);
-    }
+    let token = props.language.as_deref().unwrap_or("text");
+    let highlighted = hooks.use_cached_highlight(&props.code, token, theme::FG);
 
     element! {
         View(flex_direction: FlexDirection::Column, padding_left: 2, padding_right: 2, margin_bottom: 1, background_color: theme::DARK_BG) {
             View() {
                 Text(content: lang_label, color: theme::BLUE)
             }
-            View(flex_direction: FlexDirection::Column) {
-                #(highlighted.read().iter().map(|line_spans| {
-                    element! {
-                        View(flex_direction: FlexDirection::Row) {
-                            #(line_spans.iter().map(|(text, color)| {
-                                element! { Text(content: text.clone(), color: *color) }.into_any()
-                            }))
-                        }
+            #(if props.raw.is_some() {
+                let raw = props.raw.clone().map(|mut raw| {
+                    raw.highlight = Some(highlighted.clone());
+                    raw
+                });
+                Some(element! {
+                    View(flex_direction: FlexDirection::Column) {
+                        RawBuffer(raw: raw, color: theme::FG)
                     }
-                    .into_any()
-                }))
-            }
+                }.into_any())
+            } else {
+                Some(element! {
+                    View(flex_direction: FlexDirection::Column) {
+                        #(highlighted.iter().map(|line_spans| {
+                            element! {
+                                View(flex_direction: FlexDirection::Row) {
+                                    #(line_spans.iter().map(|(text, color)| {
+                                        element! { Text(content: text.clone(), color: *color) }.into_any()
+                                    }))
+                                }
+                            }
+                            .into_any()
+                        }))
+                    }
+                }.into_any())
+            }.into_iter())
         }
     }
 }
@@ -95,7 +63,11 @@ pub fn CodeBlock(props: &CodeBlockProps, mut hooks: Hooks) -> impl Into<AnyEleme
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::highlight::{SS, TS};
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     use std::time::Instant;
+    use syntect::easy::HighlightLines;
 
     const SAMPLE_RUST: &str = r#"
 fn fibonacci(n: u32) -> u32 {
