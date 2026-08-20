@@ -1,3 +1,4 @@
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::components::scroll::{ScrollPosition, Viewport};
 use crate::debug;
 use crate::output::capabilities;
@@ -25,11 +26,66 @@ pub struct MermaidBlockProps {
     pub source: String,
     /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
+
+/// Viewport columns at/above which the raw source editor sits beside the diagram
+/// instead of underneath, when the cursor is on the block in Normal mode.
+const SIDE_BY_SIDE_MIN_WIDTH: u32 = 120;
+/// Columns reserved for the source editor when rendered side by side.
+const SIDE_BY_SIDE_SOURCE: u32 = 40;
+/// Minimum diagram width (columns) so the graphic never collapses.
+const MIN_DIAGRAM_WIDTH: u32 = 20;
 
 /// Renders a Mermaid diagram, using Kitty graphics if available, or text fallback.
 #[component]
 pub fn MermaidBlock(props: &MermaidBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let raw = props.raw.clone();
+
+    // Fallback: without kitty there is no diagram to preserve (the text fallback
+    // already prints the source), so show the source editor alone.
+    if raw.is_some() && !capabilities::has_kitty() {
+        return element! {
+            View(flex_direction: FlexDirection::Column, margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                RawBuffer(raw: raw.unwrap(), color: theme::FG)
+            }
+        }
+        .into_any();
+    }
+
+    // Normal-mode cursor on the block + kitty: keep the diagram visible and put
+    // the source editor beside it when there is room, otherwise stack it below.
+    if let Some(raw) = raw {
+        let vw = props.viewport.as_ref().and_then(|v| v.width).unwrap_or(100);
+        let beside = vw >= SIDE_BY_SIDE_MIN_WIDTH;
+        let diagram_viewport = if beside {
+            // Reserve horizontal room for the source box so the diagram rasterizes
+            // narrower and the two fit side by side.
+            props.viewport.as_ref().cloned().map(|mut v| {
+                v.width = Some(
+                    vw.saturating_sub(SIDE_BY_SIDE_SOURCE)
+                        .max(MIN_DIAGRAM_WIDTH),
+                );
+                v
+            })
+        } else {
+            props.viewport.clone()
+        };
+
+        return element! {
+            View(flex_direction: if beside { FlexDirection::Row } else { FlexDirection::Column }, margin_bottom: 1) {
+                View() {
+                    KittyMermaid(source: props.source.clone(), viewport: diagram_viewport)
+                }
+                View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                    RawBuffer(raw: raw, color: theme::FG)
+                }
+            }
+        }
+        .into_any();
+    }
+
     element! {
        View(flex_direction: FlexDirection::Column, margin_bottom: 1) {
            #(if capabilities::has_kitty() {
@@ -48,6 +104,7 @@ pub fn MermaidBlock(props: &MermaidBlockProps, _hooks: Hooks) -> impl Into<AnyEl
            })
        }
     }
+    .into_any()
 }
 
 /// Properties for the [`KittyMermaid`] component.

@@ -1,4 +1,6 @@
+use crate::components::highlight::{MARKDOWN, UseHighlight};
 use crate::components::inline_renderer::render_inlines;
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::components::scroll::Viewport;
 use crate::document::model::{Alignment, TableCell, inlines_to_text};
 use crate::theme;
@@ -18,6 +20,8 @@ pub struct TableBlockProps {
     pub file_path: PathBuf,
     /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
 
 /// Renders a Markdown table with alignment support and styled borders.
@@ -25,7 +29,20 @@ pub struct TableBlockProps {
 /// Calculates column widths from content, renders headers with bold styling,
 /// and applies alignment to each cell.
 #[component]
-pub fn TableBlock(props: &TableBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
+pub fn TableBlock(props: &TableBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
+    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::FG);
+
+    if let Some(mut raw) = props.raw.clone() {
+        raw.highlight = Some(highlighted);
+        return element! {
+            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                RawBuffer(raw: raw, color: theme::FG)
+            }
+        }
+        .into_any();
+    }
+
     let ncols = props.headers.len();
     if ncols == 0 {
         return element! {

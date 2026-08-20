@@ -10,6 +10,8 @@ pub mod document;
 pub mod editor;
 /// ATX heading rendering (h1–h6) with optional icons.
 pub mod heading;
+/// Shared syntect syntax highlighting for raw buffer views.
+pub mod highlight;
 /// Raw HTML passthrough block rendering.
 pub mod html_block;
 /// Inline image rendering with Kitty/iterm2 protocol support.
@@ -26,6 +28,8 @@ pub mod mermaid_block;
 pub mod paragraph;
 /// Blockquote rendering with left-border styling.
 pub mod quote_block;
+/// Normal-mode raw buffer view with cursor, rendered inside block components.
+pub mod raw_buffer;
 /// Scroll viewport management and scroll-into-view behavior.
 pub mod scroll;
 /// Markdown table rendering with alignment support.

@@ -1,4 +1,6 @@
 use crate::components::blocks_renderer::BlocksRenderer;
+use crate::components::highlight::{MARKDOWN, UseHighlight};
+use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::components::scroll::Viewport;
 use crate::document::model::ListItem;
 use crate::theme;
@@ -18,6 +20,8 @@ pub struct ListBlockProps {
     pub file_path: PathBuf,
     /// Optional viewport dimensions for responsive rendering.
     pub viewport: Option<Viewport>,
+    /// Optional raw buffer + cursor for the Normal-mode source view.
+    pub raw: Option<RawState>,
 }
 
 /// Renders a bullet or ordered list with its items.
@@ -25,7 +29,20 @@ pub struct ListBlockProps {
 /// Each item is prefixed with a bullet (`•`), checkbox (`☒`/`☐`),
 /// or number. Nested blocks within items are rendered recursively.
 #[component]
-pub fn ListBlock(props: &ListBlockProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
+pub fn ListBlock(props: &ListBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
+    let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
+    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::FG);
+
+    if let Some(mut raw) = props.raw.clone() {
+        raw.highlight = Some(highlighted);
+        return element! {
+            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+                RawBuffer(raw: raw, color: theme::FG)
+            }
+        }
+        .into_any();
+    }
+
     let mut num = props.start.unwrap_or(1);
 
     element! {
@@ -59,4 +76,5 @@ pub fn ListBlock(props: &ListBlockProps, _hooks: Hooks) -> impl Into<AnyElement<
             }))
         }
     }
+    .into_any()
 }
