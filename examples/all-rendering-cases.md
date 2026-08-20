@@ -150,7 +150,7 @@ H<sub>2</sub>O; physicists write E=mc<sup>2</sup>.
 
 Line one<br>line two after a <br/> tag.
 
-An inline image via the HTML tag: <img src="../rivas.png" alt="Rivas logo">
+An inline image via the HTML tag: <img src="../Rivas_logo.png" alt="Rivas logo">
 
 Unknown tags are hidden but their text is kept: <span>this content survives</span>.
 HTML comments are dropped: <!--this does not show-->.
