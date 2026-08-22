@@ -54,10 +54,10 @@ impl Mode {
     /// Returns the theme color used for the status bar indicator in this mode.
     pub fn color(&self) -> Color {
         match self {
-            Mode::Normal => theme::BLUE,
-            Mode::Insert => theme::GREEN,
-            Mode::Visual => theme::MAGENTA,
-            Mode::Command | Mode::Search { .. } => theme::YELLOW,
+            Mode::Normal => theme::blue(),
+            Mode::Insert => theme::green(),
+            Mode::Visual => theme::magenta(),
+            Mode::Command | Mode::Search { .. } => theme::yellow(),
         }
     }
 }

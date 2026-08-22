@@ -1,6 +1,7 @@
 use crate::components::highlight::UseHighlight;
 use crate::components::raw_buffer::{RawBuffer, RawState};
 use crate::theme;
+use iocraft::prelude::Color;
 use iocraft::prelude::*;
 
 /// Properties for the [`CodeBlock`] component.
@@ -16,28 +17,54 @@ pub struct CodeBlockProps {
 
 /// Renders a syntax-highlighted fenced code block.
 ///
-/// Uses `syntect` for highlighting with the base16-ocean-dark theme.
+/// Uses `syntect` for highlighting; the highlight scheme follows the active
+/// app theme (dark palettes get a dark scheme, light ones a light scheme).
 /// The language label is displayed in the top-right corner.
 #[component]
 pub fn CodeBlock(props: &CodeBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let lang_label = props.language.clone().unwrap_or_else(|| "code".to_string());
 
     let token = props.language.as_deref().unwrap_or("text");
-    let highlighted = hooks.use_cached_highlight(&props.code, token, theme::FG);
+    // Rendered view highlights the code itself with the language token.
+    // The Normal-mode raw view shows the full source span (including fences);
+    // we keep the *language* highlighting for the code lines and style the
+    // fence lines explicitly, so highlight lines pair 1:1 with raw lines
+    // (highlight[i] ↔ text[i+1]) and RawBuffer never mispairs them.
+    let highlighted = hooks.use_cached_highlight(&props.code, token, theme::fg());
 
     element! {
-        View(flex_direction: FlexDirection::Column, padding_left: 2, padding_right: 2, margin_bottom: 1, background_color: theme::DARK_BG) {
+        View(flex_direction: FlexDirection::Column, padding_left: 2, padding_right: 2, margin_bottom: 1, background_color: theme::dark_bg()) {
             View() {
-                Text(content: lang_label, color: theme::BLUE)
+                Text(content: lang_label, color: theme::blue())
             }
             #(if props.raw.is_some() {
                 let raw = props.raw.clone().map(|mut raw| {
-                    raw.highlight = Some(highlighted.clone());
+                    // Map highlight lines onto raw text lines: when the span
+                    // includes the fences, fence rows get a dim style and code
+                    // rows keep the language-colored spans.
+                    let lines: Vec<&str> = raw.text.split('\n').collect();
+                    let n = lines.len();
+                    let fenced = lines.first().map_or(false, |l| l.trim_start().starts_with("```"));
+                    let mut hl: Vec<Vec<(String, Color)>> = Vec::with_capacity(n);
+                    for (idx, line) in lines.iter().enumerate() {
+                        if fenced && (idx == 0 || idx == n - 1) {
+                            hl.push(vec![(line.to_string(), theme::comment())]);
+                        } else {
+                            let h_idx = if fenced { idx - 1 } else { idx };
+                            hl.push(
+                                highlighted
+                                    .get(h_idx)
+                                    .cloned()
+                                    .unwrap_or_else(|| vec![(line.to_string(), theme::fg())]),
+                            );
+                        }
+                    }
+                    raw.highlight = Some(hl);
                     raw
                 });
                 Some(element! {
                     View(flex_direction: FlexDirection::Column) {
-                        RawBuffer(raw: raw, color: theme::FG)
+                        RawBuffer(raw: raw, color: theme::fg())
                     }
                 }.into_any())
             } else {

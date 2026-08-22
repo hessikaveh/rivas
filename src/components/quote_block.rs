@@ -25,24 +25,24 @@ pub struct QuoteBlockProps {
 pub fn QuoteBlock(props: &QuoteBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let file_path = props.file_path.clone().unwrap_or_default();
     let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
-    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::FG);
+    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::fg());
     if let Some(mut raw) = props.raw.clone() {
         raw.highlight = Some(highlighted);
         return element! {
-            View(flex_direction: FlexDirection::Row, padding_left: 2, padding_right: 1, margin_bottom: 1, background_color: theme::DARK_BG) {
+            View(flex_direction: FlexDirection::Row, padding_left: 2, padding_right: 1, margin_bottom: 1, background_color: theme::dark_bg()) {
                 View() {
-                    Text(content: " ▎ ".to_string(), color: theme::TEAL)
+                    Text(content: " ▎ ".to_string(), color: theme::teal())
                 }
                 View(flex_grow: 1.0) {
-                    RawBuffer(raw: raw, color: theme::FG)
+                    RawBuffer(raw: raw, color: theme::fg())
                 }
             }
         };
     }
     element! {
-        View(flex_direction: FlexDirection::Row, padding_left: 2, padding_right: 1, margin_bottom: 1, background_color: theme::DARK_BG) {
+        View(flex_direction: FlexDirection::Row, padding_left: 2, padding_right: 1, margin_bottom: 1, background_color: theme::dark_bg()) {
             View() {
-                Text(content: " ▎ ".to_string(), color: theme::TEAL)
+                Text(content: " ▎ ".to_string(), color: theme::teal())
             }
             BlocksRenderer(
                 blocks: props.children.clone(),

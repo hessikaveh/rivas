@@ -182,6 +182,19 @@ fn main() {
 No language declared, but the raw lines and indentation are preserved.
 </pre>
 
+## Footnotes
+
+Rivas supports footnotes: numeric references render as superscript markers and
+definitions render with their label. Here is a numeric one[^1], a named
+one[^note], and an unnamed-label edge case [^missing].
+
+[^1]: The body of a numeric footnote can contain **inline formatting**,
+`inline code`, and math $a^2 + b^2$.
+
+[^note]: Named labels work too, and definitions support multiple paragraphs.
+
+    This second paragraph belongs to the same footnote.
+
 ## Math
 
 Inline math should render in text flow: $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$.

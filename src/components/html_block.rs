@@ -25,13 +25,13 @@ pub struct HtmlBlockProps {
 #[component]
 pub fn HtmlBlock(props: &HtmlBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
-    let highlighted = hooks.use_cached_highlight(source, HTML, theme::FG);
+    let highlighted = hooks.use_cached_highlight(source, HTML, theme::fg());
 
     if let Some(mut raw) = props.raw.clone() {
         raw.highlight = Some(highlighted);
         return element! {
-            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
-                RawBuffer(raw: raw, color: theme::FG)
+            View(margin_bottom: 1, background_color: theme::dark_bg()) {
+                RawBuffer(raw: raw, color: theme::fg())
             }
         }
         .into_any();
@@ -40,7 +40,7 @@ pub fn HtmlBlock(props: &HtmlBlockProps, mut hooks: Hooks) -> impl Into<AnyEleme
     let inlines = parse_html_fragment(&props.content);
     let styled_elements = render_inlines(
         &inlines,
-        theme::FG,
+        theme::fg(),
         false,
         props.file_path.as_ref(),
         props.viewport.as_ref().and_then(|v| v.height),

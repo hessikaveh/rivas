@@ -9,9 +9,14 @@ pub static SS: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_none
 /// Bundled syntect theme set (loaded once).
 pub static TS: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
-/// The theme used for all syntax highlighting.
+/// The theme used for all syntax highlighting. Follows the active app theme
+/// (dark palettes get a dark highlight scheme, light ones a light scheme).
 fn highlight_theme() -> &'static syntect::highlighting::Theme {
-    &TS.themes["base16-ocean.dark"]
+    if crate::theme::is_dark() {
+        &TS.themes["base16-ocean.dark"]
+    } else {
+        &TS.themes["base16-ocean.light"]
+    }
 }
 
 /// Highlights each line of `text` under the given syntax token and returns
@@ -75,6 +80,8 @@ impl UseHighlight for Hooks<'_, '_> {
             let mut hasher = DefaultHasher::new();
             token.hash(&mut hasher);
             text.hash(&mut hasher);
+            // Recompute when the theme changes (highlight colors follow it).
+            crate::theme::index().hash(&mut hasher);
             hasher.finish()
         };
 

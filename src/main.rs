@@ -34,8 +34,10 @@ enum AppAction {
 struct Cli {
     /// Markdown file to view (reads stdin if omitted)
     file: Option<PathBuf>,
-    /// Theme: dark, light
-    #[arg(short, long, default_value = "dark")]
+    /// Color theme. One of: tokyo-night (default), dracula, nord,
+    /// gruvbox-dark, catppuccin-mocha, solarized-light. Cycle at runtime
+    /// with Ctrl+T.
+    #[arg(short, long, default_value = "tokyo-night")]
     theme: String,
     /// Enable debug mode: JSONL log to rivas-debug.jsonl + visual overlay annotations
     #[arg(long)]
@@ -81,6 +83,13 @@ fn debug_annotations_enabled(cli: &Cli) -> bool {
 fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
+    if !theme::set_by_name(&cli.theme) {
+        anyhow::bail!(
+            "Unknown theme '{}'. Available themes: {}",
+            cli.theme,
+            theme::names().collect::<Vec<_>>().join(", ")
+        );
+    }
     debug::init(debug_json_enabled(&cli), debug_annotations_enabled(&cli));
     crate::assets::math::set_math_mode(cli.math);
 
@@ -225,6 +234,8 @@ fn App<'a>(props: &AppProps<'a>, mut hooks: Hooks) -> impl Into<AnyElement<'stat
                 if ctrl && code == KeyCode::Char('p') {
                     *action.lock().unwrap() = AppAction::SearchFile;
                     should_exit.set(true);
+                } else if ctrl && code == KeyCode::Char('t') {
+                    theme::cycle();
                 }
             }
             _ => {}
@@ -274,30 +285,34 @@ fn App<'a>(props: &AppProps<'a>, mut hooks: Hooks) -> impl Into<AnyElement<'stat
                 on_change,
                 on_quit,
             )
-            View(width: 100pct, height: 1, background_color: theme::STATUS_BG, flex_direction: FlexDirection::Row) {
-                View(background_color: theme::DARK_GREY) {
-                    Text(content: " :q ", color: theme::FG)
+            View(width: 100pct, height: 1, background_color: theme::status_bg(), flex_direction: FlexDirection::Row) {
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " :q ", color: theme::fg())
                 }
                 Text(content: " Quit ")
-                View(background_color: theme::DARK_GREY) {
-                    Text(content: " C-p ", color: theme::FG)
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " C-p ", color: theme::fg())
                 }
                 Text(content: " Find ")
-                View(background_color: theme::DARK_GREY) {
-                    Text(content: " j/k ", color: theme::FG)
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " j/k ", color: theme::fg())
                 }
                 Text(content: " Scroll ")
-                View(background_color: theme::DARK_GREY) {
-                    Text(content: " gg/G ", color: theme::FG)
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " gg/G ", color: theme::fg())
                 }
                 Text(content: " Top/Bottom ")
-                View(background_color: theme::DARK_GREY) {
-                    Text(content: " :math ", color: theme::FG)
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " :math ", color: theme::fg())
                 }
                 Text(content: " Math mode ")
-                View(background_color: theme::DARK_GREY) {
-                    Text(content: " 🔍 [ ] ", color: theme::FG)
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " 🔍 [ ] ", color: theme::fg())
                 }
+                View(background_color: theme::dark_grey()) {
+                    Text(content: " C-t ", color: theme::fg())
+                }
+                Text(content: format!(" Theme ({}) ", theme::current().name))
                 View(flex_grow: 1.0) {}
             }
         }

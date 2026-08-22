@@ -27,10 +27,13 @@ pub struct HeadingProps {
 pub fn Heading(props: &HeadingProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let prefix = "#".repeat(props.level as usize);
     let color = match props.level {
-        1 => theme::CYAN,
-        2 => theme::GREEN,
-        3 => theme::YELLOW,
-        _ => theme::FG,
+        1 => theme::cyan(),
+        2 => theme::green(),
+        3 => theme::yellow(),
+        4 => theme::orange(),
+        5 => theme::magenta(),
+        // h6 stays dimmer than body text but still distinct from plain prose.
+        _ => theme::teal(),
     };
 
     let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
@@ -39,7 +42,7 @@ pub fn Heading(props: &HeadingProps, mut hooks: Hooks) -> impl Into<AnyElement<'
     let element = if let Some(mut raw) = props.raw.clone() {
         raw.highlight = Some(highlighted);
         element! {
-            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
+            View(margin_bottom: 1, background_color: theme::dark_bg()) {
                 RawBuffer(raw: raw, color: color)
             }
         }

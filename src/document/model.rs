@@ -56,6 +56,13 @@ pub enum Block {
         content: String,
         span: (usize, usize),
     },
+    /// A footnote definition (`[^label]: text`), rendered at its source
+    /// position with its label and nested content.
+    FootnoteDefinition {
+        label: String,
+        children: Vec<Block>,
+        span: (usize, usize),
+    },
 }
 
 /// A single item in a bullet or ordered list.
@@ -102,6 +109,7 @@ impl Block {
             Block::ThematicBreak { span } => *span,
             Block::Image { span, .. } => *span,
             Block::Html { span, .. } => *span,
+            Block::FootnoteDefinition { span, .. } => *span,
         }
     }
 }
@@ -138,6 +146,8 @@ pub enum Inline {
     SoftBreak,
     /// A hard line break (two trailing spaces or `\` at line end).
     HardBreak,
+    /// A footnote reference (`[^label]`), rendered as a superscript marker.
+    FootnoteRef(String),
 }
 
 /// A parsed Markdown document, consisting of a sequence of top-level blocks.
@@ -162,6 +172,7 @@ pub fn inlines_to_text(inlines: &[Inline]) -> String {
             | Inline::Subscript(ch)
             | Inline::Superscript(ch) => s.push_str(&inlines_to_text(ch)),
             Inline::Link { text, .. } => s.push_str(&inlines_to_text(text)),
+            Inline::FootnoteRef(_) => {}
             Inline::SoftBreak => s.push(' '),
             Inline::HardBreak => s.push('\n'),
             _ => {}

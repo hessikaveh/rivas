@@ -8,6 +8,8 @@ pub mod cursor_info;
 pub mod document;
 /// Vim-style modal editor with Normal, Insert, Visual, Command, and Search modes.
 pub mod editor;
+/// Footnote definition rendering with dim label marker.
+pub mod footnote_block;
 /// ATX heading rendering (h1–h6) with optional icons.
 pub mod heading;
 /// Shared syntect syntax highlighting for raw buffer views.
@@ -18,6 +20,8 @@ pub mod html_block;
 pub mod image;
 /// Inline Markdown rendering (bold, italic, code, links, etc.).
 pub mod inline_renderer;
+/// Shared Kitty-graphics hook used by image/math/mermaid components.
+pub mod kitty_graphic;
 /// Bullet and numbered list rendering.
 pub mod list_block;
 /// LaTeX math block rendering (Unicode or image mode).

@@ -24,20 +24,20 @@ pub struct ParagraphProps {
 #[component]
 pub fn Paragraph(props: &ParagraphProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
-    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::FG);
+    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::fg());
 
     let element = if let Some(mut raw) = props.raw.clone() {
         raw.highlight = Some(highlighted);
         element! {
-            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
-                RawBuffer(raw: raw, color: theme::FG)
+            View(margin_bottom: 1, background_color: theme::dark_bg()) {
+                RawBuffer(raw: raw, color: theme::fg())
             }
         }
         .into_any()
     } else {
         let styled_elements = render_inlines(
             &props.content,
-            theme::FG,
+            theme::fg(),
             false,
             props.file_path.as_ref(),
             props.viewport.as_ref().and_then(|v| v.height),
