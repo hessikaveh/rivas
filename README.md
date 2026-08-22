@@ -12,7 +12,9 @@ protocol.
 - Headings, paragraphs, block quotes, thematic breaks, and wrapped text.
 - Inline emphasis, strong text, strikethrough, inline code, links, and inline math.
 - Ordered, unordered, nested, and task lists.
+- Footnotes with numeric or named labels.
 - Tables with Markdown alignment markers.
+- Six built-in color themes, switchable at runtime with `Ctrl+T`.
 - Local raster images (Kitty graphics or text fallback).
 - Mermaid diagrams rendered to PNG (Kitty graphics or text fallback).
 - LaTeX-style math with two rendering modes:
@@ -86,10 +88,33 @@ rivas [OPTIONS] [FILE]
 |---|---|
 | `--math <MODE>` | Math rendering mode: `unicode` (default) or `image`. Unicode works everywhere; image requires Kitty graphics. |
 | `--force-kitty` | Force Kitty graphics protocol even if the terminal is not auto-detected. Use if your terminal supports Kitty but isn't recognized. |
-| `-t, --theme <THEME>` | Color theme: `dark` (default) or `light`. |
+| `-t, --theme <THEME>` | Color theme: `tokyo-night` (default), `dracula`, `nord`, `gruvbox-dark`, `catppuccin-mocha`, or `solarized-light`. Can also be switched at runtime with `Ctrl+T`. |
 | `--cell-width <PX>` | Override the pixel width of a terminal cell. Graphics are shown at their natural size mapped onto this cell, so this grows/shrinks images, diagrams, and formulas. Use to correct a terminal whose `TIOCGWINSZ` pixel size is wrong (e.g., a secondary display). If only one axis is given, the other defaults to its standard value (16). |
 | `--cell-height <PX>` | Override the pixel height of a terminal cell (see `--cell-width`). If only one axis is given, the other defaults to 8. |
 | `--debug` | Enable debug logging and visual overlay annotations. |
+
+### Themes
+
+Rivas ships with six built-in color themes:
+
+| Theme | Style |
+|---|---|
+| `tokyo-night` | Dark (default) |
+| `dracula` | Dark |
+| `nord` | Dark |
+| `gruvbox-dark` | Dark |
+| `catppuccin-mocha` | Dark |
+| `solarized-light` | Light |
+
+Select one at startup:
+
+```sh
+rivas --theme dracula document.md
+```
+
+Or cycle through all themes at runtime with `Ctrl+T`; the active theme name is
+shown in the bottom status bar. Syntax highlighting, math images, and Mermaid
+diagrams all follow the active theme.
 
 ### Math Modes
 
@@ -128,7 +153,7 @@ graphics two ways:
   every image, diagram, and formula, and see the result immediately:
 
   ```
-  :q Quit | C-p Find | j/k Scroll | gg/G Top/Bottom | :math Math mode | 🔍 [ ]
+  :q Quit | C-p Find | j/k Scroll | gg/G Top/Bottom | :math Math mode | C-t Themes | 🔍 [ ]
   ```
 
 - **From the CLI** — pin the cell size explicitly with `--cell-width` /
@@ -172,6 +197,18 @@ Local images are resolved relative to the Markdown file:
 ```md
 ![Seedling](./seedling.png)
 ```
+
+Footnotes work with numeric or named labels:
+
+```md
+Rivas supports footnotes[^1] and named ones[^note].
+
+[^1]: A numeric footnote body.
+[^note]: A named footnote body.
+```
+
+Numeric references render as superscript markers; definitions render inline at
+their source position with their label.
 
 ## Development
 

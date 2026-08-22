@@ -95,7 +95,7 @@ fn build_line_contents(
 /// verbatim when the raw state carries them.
 #[component]
 pub fn RawBuffer(props: &RawBufferProps, _hooks: Hooks) -> impl Into<AnyElement<'static>> {
-    let fg = props.color.unwrap_or(theme::FG);
+    let fg = props.color.unwrap_or(theme::fg());
 
     let lines = props.raw.clone().map(|raw| {
         let highlight = raw.highlight.clone();

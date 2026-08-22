@@ -31,13 +31,13 @@ pub struct ListBlockProps {
 #[component]
 pub fn ListBlock(props: &ListBlockProps, mut hooks: Hooks) -> impl Into<AnyElement<'static>> {
     let source = props.raw.as_ref().map(|r| r.text.as_str()).unwrap_or("");
-    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::FG);
+    let highlighted = hooks.use_cached_highlight(source, MARKDOWN, theme::fg());
 
     if let Some(mut raw) = props.raw.clone() {
         raw.highlight = Some(highlighted);
         return element! {
-            View(margin_bottom: 1, background_color: theme::DARK_BG, padding_left: 2, padding_right: 2) {
-                RawBuffer(raw: raw, color: theme::FG)
+            View(margin_bottom: 1, background_color: theme::dark_bg()) {
+                RawBuffer(raw: raw, color: theme::fg())
             }
         }
         .into_any();
@@ -61,7 +61,7 @@ pub fn ListBlock(props: &ListBlockProps, mut hooks: Hooks) -> impl Into<AnyEleme
                 element! {
                     View(flex_direction: FlexDirection::Row) {
                         View(width: 4) {
-                            Text(content: format!("{} ", marker), color: theme::YELLOW)
+                            Text(content: format!("{} ", marker), color: theme::yellow())
                         }
                         View(flex_grow: 1.0) {
                         BlocksRenderer(

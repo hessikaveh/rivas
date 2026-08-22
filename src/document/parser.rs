@@ -11,7 +11,8 @@ pub fn parse_markdown(source: &str) -> Document {
     let options = Options::ENABLE_MATH
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_TABLES;
+        | Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES;
     let parser = Parser::new_ext(source, options);
 
     let events: Vec<(Event, Range<usize>)> = parser.into_offset_iter().collect();
@@ -106,6 +107,10 @@ fn parse_inlines_until(
             }
             Event::InlineHtml(html) => {
                 handle_html_tag(html.as_ref(), &mut inlines, &mut html_stack);
+                *pos += 1;
+            }
+            Event::FootnoteReference(label) => {
+                inlines.push(Inline::FootnoteRef(label.to_string()));
                 *pos += 1;
             }
 
@@ -619,6 +624,14 @@ fn parse_block_tag(
         }
         Tag::List(start) => Some(parse_list(*start, events, pos, start_offset)),
         Tag::Table(aligns) => Some(parse_table(aligns, events, pos, start_offset)),
+        Tag::FootnoteDefinition(label) => {
+            let (children, end_offset) = parse_blocks_with_end(events, pos);
+            Some(Block::FootnoteDefinition {
+                label: label.to_string(),
+                children,
+                span: (start_offset, end_offset),
+            })
+        }
 
         // Inline-level tags that appear at block level (e.g. bare `**bold**`).
         // We must wrap them in the correct inline node before wrapping in a paragraph,
@@ -1453,5 +1466,43 @@ $$
             "expected HTML block, got: {:?}",
             doc.blocks[0]
         );
+    }
+
+    #[test]
+    fn footnote_definition_and_reference_parse() {
+        let doc = parse_markdown("Text with note[^1].\n\n[^1]: The note body.\n");
+        assert!(matches!(&doc.blocks[0], Block::Paragraph { .. }));
+        match &doc.blocks[1] {
+            Block::FootnoteDefinition {
+                label, children, ..
+            } => {
+                assert_eq!(label, "1");
+                assert_eq!(children.len(), 1);
+                assert!(matches!(&children[0], Block::Paragraph { .. }));
+            }
+            other => panic!("Expected FootnoteDefinition, got: {:?}", other),
+        }
+        // Reference inside the paragraph becomes an inline marker.
+        match &doc.blocks[0] {
+            Block::Paragraph { content, .. } => {
+                assert!(
+                    content
+                        .iter()
+                        .any(|i| matches!(i, Inline::FootnoteRef(l) if l == "1")),
+                    "expected FootnoteRef inline, got: {:?}",
+                    content
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn footnote_with_named_label_parses() {
+        let doc = parse_markdown("X[^note]\n\n[^note]: body\n");
+        match &doc.blocks[1] {
+            Block::FootnoteDefinition { label, .. } => assert_eq!(label, "note"),
+            other => panic!("Expected FootnoteDefinition, got: {:?}", other),
+        }
     }
 }

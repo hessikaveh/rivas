@@ -377,8 +377,8 @@ fn load(source: GfxSource) -> Result<LoadedData, String> {
             max_cols,
             max_rows,
         } => {
-            let (png, w, h) =
-                render_math(&content, display, max_w, true).map_err(|e| format!("{:#}", e))?;
+            let (png, w, h) = render_math(&content, display, max_w, crate::theme::is_dark())
+                .map_err(|e| format!("{:#}", e))?;
             Ok(LoadedData {
                 data: Arc::new(encode(&png)),
                 frames: Vec::new(),

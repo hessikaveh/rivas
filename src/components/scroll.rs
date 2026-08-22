@@ -3,6 +3,21 @@ use crate::document::parser::parse_html_fragment;
 use crate::output::graphics_manager::IMAGE_HEIGHT_CACHE;
 use crate::theme;
 use iocraft::prelude::KeyCode;
+use unicode_width::UnicodeWidthStr;
+
+/// Number of terminal rows `text` occupies when soft-wrapped at `wrap_width`
+/// display columns. Uses terminal display width (CJK/emoji count as 2 cells),
+/// matching how iocraft lays out wrapped text, so virtual-scroll spacers don't
+/// underestimate real heights for wide glyphs.
+fn wrapped_rows(text: &str, wrap_width: usize) -> u32 {
+    text.split('\n')
+        .map(|line| {
+            (UnicodeWidthStr::width(line) as u32)
+                .div_ceil(wrap_width.max(1) as u32)
+                .max(1)
+        })
+        .sum()
+}
 
 /// Describes a user-initiated scroll action from a key press.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,8 +203,7 @@ pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u
         Block::Heading { .. } => 2,
         Block::Paragraph { content, .. } => {
             let text = inlines_to_text(content);
-            let chars = text.chars().count();
-            ((chars as f32 / wrap_width as f32).ceil() as u32).max(1)
+            wrapped_rows(&text, wrap_width).max(1)
         }
         Block::Code { code, .. } => code.lines().count() as u32 + 2,
         Block::Math { display, .. } => {
@@ -207,8 +221,20 @@ pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u
                 .unwrap_or(10)
         }
         Block::Table { rows, .. } => (rows.len() + 1) as u32,
-        Block::List { items, .. } => items.len() as u32,
-        Block::Quote { children, .. } => children
+        Block::List { items, .. } => items
+            .iter()
+            .map(|item| {
+                // Each item wraps its inner blocks next to the marker column,
+                // so estimate from the item's children (min one row each).
+                item.content
+                    .iter()
+                    .map(|b| estimate_block_height(b, content, vw))
+                    .sum::<u32>()
+                    .max(1)
+            })
+            .sum::<u32>()
+            .max(items.len() as u32),
+        Block::Quote { children, .. } | Block::FootnoteDefinition { children, .. } => children
             .iter()
             .map(|b| estimate_block_height(b, content, vw))
             .sum::<u32>()
@@ -226,12 +252,7 @@ pub fn estimate_block_height(block: &Block, content: &str, vw: Option<u32>) -> u
             // from the parsed fragment rather than the raw source lines.
             let inlines = parse_html_fragment(content);
             let text = inlines_to_text(&inlines);
-            text.split('\n')
-                .map(|line| {
-                    ((line.chars().count() as f32 / wrap_width as f32).ceil() as u32).max(1)
-                })
-                .sum::<u32>()
-                .max(1)
+            wrapped_rows(&text, wrap_width).max(1)
         }
     }
 }

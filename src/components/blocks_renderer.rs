@@ -1,5 +1,6 @@
 use crate::components::code_block::CodeBlock;
 use crate::components::editor::{EditorState, Mode};
+use crate::components::footnote_block::FootnoteBlock;
 use crate::components::heading::Heading;
 use crate::components::html_block::HtmlBlock;
 use crate::components::image::Image;
@@ -20,6 +21,8 @@ use crate::document::model::Block;
 use crate::output::graphics_manager::IMAGE_HEIGHT_CACHE;
 use crate::theme;
 use iocraft::prelude::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use unicode_width::UnicodeWidthChar;
@@ -161,9 +164,10 @@ fn render_block_element(
         Block::Quote { children, .. } => element!{QuoteBlock(children: children.clone(), file_path: Some(file_path.clone()), viewport: viewport.clone(), raw: raw.clone())}.into_any(),
         Block::List { ordered, start, items, .. } => element!{ListBlock(ordered: *ordered, start: *start, items: items.clone(), file_path: file_path.clone(), viewport: viewport.clone(), raw: raw.clone())}.into_any(),
         Block::Table { headers, alignments, rows, .. } => element!{TableBlock(headers: headers.clone(), alignments: alignments.clone(), rows: rows.clone(), file_path: file_path.clone(), viewport: viewport.clone(), raw: raw.clone())}.into_any(),
-        Block::ThematicBreak{..} => element!{ThematicBreak(raw: raw.clone())}.into_any(),
+        Block::ThematicBreak{..} => element!{ThematicBreak(viewport: viewport.clone(), raw: raw.clone())}.into_any(),
         Block::Image { alt, url, title, .. } => element!{Image(url: url.clone(), file_path: file_path.clone(), title: title.clone(), alt: Some(alt.clone()), viewport: viewport.clone(), raw: raw.clone())}.into_any(),
         Block::Html { content, .. } => element!{HtmlBlock(content: content.clone(), file_path: Some(file_path.clone()), viewport: viewport.clone(), raw: raw.clone())}.into_any(),
+        Block::FootnoteDefinition { label, children, .. } => element!{FootnoteBlock(label: label.clone(), children: children.clone(), file_path: Some(file_path.clone()), viewport: viewport.clone(), raw: raw.clone())}.into_any(),
     }
 }
 
@@ -241,10 +245,17 @@ pub fn BlocksRenderer(
 
     let block_counts = props.blocks.len();
 
-    // Cache cumulative block heights and start offsets — only recompute when blocks change
+    // Cache cumulative block heights and start offsets — only recompute when
+    // the document content, block count, width or graphics sizing changes. The
+    // content fingerprint is what catches in-place edits (same block count):
+    // without it, retyping inside a paragraph would keep stale placeholder
+    // heights for virtualized blocks until a resize or image load.
+    let mut content_hasher = DefaultHasher::new();
+    props.content.hash(&mut content_hasher);
     let cum_key = format!(
-        "{}:{}:{}",
+        "{}:{:016x}:{}:{}",
         block_counts,
+        content_hasher.finish(),
         vw.unwrap_or(0),
         IMAGE_HEIGHT_CACHE.generation()
     );
@@ -372,27 +383,27 @@ pub fn BlocksRenderer(
                     }
 
                     let cursor_bg = match mode {
-                        Mode::Normal => theme::FG,
-                        Mode::Insert => theme::GREEN,
-                        Mode::Visual => theme::MAGENTA,
-                        Mode::Command | Mode::Search { .. } => theme::YELLOW,
+                        Mode::Normal => theme::fg(),
+                        Mode::Insert => theme::green(),
+                        Mode::Visual => theme::magenta(),
+                        Mode::Command | Mode::Search { .. } => theme::yellow(),
                     };
 
                     let (cursor_fg, cursor_bg_final, cursor_char) = if let Some(state_ref) = &props.editor_state {
                         let s_opt = state_ref.read();
                         if let Some(s) = s_opt.as_ref() {
                             if s.mode == Mode::Insert {
-                                (cursor_bg, theme::DARK_BG, "┃")
+                                (cursor_bg, theme::dark_bg(), "┃")
                             } else if s.operator.is_some() {
-                                (cursor_bg, theme::DARK_BG, "_")
+                                (cursor_bg, theme::dark_bg(), "_")
                             } else {
-                                (theme::DARK_BG, cursor_bg, " ")
+                                (theme::dark_bg(), cursor_bg, " ")
                             }
                         } else {
-                            (theme::DARK_BG, cursor_bg, " ")
+                            (theme::dark_bg(), cursor_bg, " ")
                         }
                     } else {
-                        (theme::DARK_BG, cursor_bg, " ")
+                        (theme::dark_bg(), cursor_bg, " ")
                     };
 
                     // Convert to owned strings for the factory closure
@@ -411,11 +422,13 @@ pub fn BlocksRenderer(
                     let scroll_handle_siv = props.scroll_handle.clone();
 
                     let factory: Arc<dyn Fn() -> AnyElement<'static> + Send + Sync + 'static> = Arc::new(move || {
+                        // No horizontal padding here: the document container
+                        // (document.rs) already insets all blocks by 2, and
+                        // rendered blocks don't add their own — keeping the raw
+                        // view padding-free aligns both views' left edges.
                         element! {
                             View(
-                                background_color: theme::DARK_BG,
-                                padding_left: 2,
-                                padding_right: 2,
+                                background_color: theme::dark_bg(),
                                 flex_direction: FlexDirection::Column,
                                 overflow: Overflow::Hidden,
                             ) {
@@ -475,12 +488,12 @@ pub fn BlocksRenderer(
                                                         element! {
                                                             View(flex_direction: FlexDirection::Row) {
                                                                 #(line_parts.iter().map(|(selected, text)| element! {
-                                                                    Text(content: text.clone(), color: if *selected { theme::MAGENTA } else { theme::FG }, wrap: TextWrap::Wrap)
+                                                                    Text(content: text.clone(), color: if *selected { theme::magenta() } else { theme::fg() }, wrap: TextWrap::Wrap)
                                                                 }))
                                                             }
                                                         }.into_any()
                                                     } else {
-                                                        element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
+                                                        element! { Text(content: segment.to_string(), color: theme::fg(), wrap: TextWrap::Wrap) }.into_any()
                                                     }
                                                 } else if Some(idx) == cursor_line_idx_siv {
                                                     let mut seg_idx_cursor = 0;
@@ -511,53 +524,53 @@ pub fn BlocksRenderer(
                                                                         if s.mode == Mode::Insert {
                                                                             element! {
                                                                                 View(flex_direction: FlexDirection::Row) {
-                                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    Text(content: before_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                     View(background_color: cursor_bg_final_clone, width: 1) {
                                                                                         Text(content: cursor_char_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                                     }
-                                                                                    Text(content: format!("{}{}", c_str, after_str), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    Text(content: format!("{}{}", c_str, after_str), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                 }
                                                                             }.into_any()
                                                                         } else if s.operator.is_some() {
                                                                             element! {
                                                                                 View(flex_direction: FlexDirection::Row) {
-                                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    Text(content: before_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                     View(background_color: cursor_bg_final_clone, width: 1) {
                                                                                         Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                                     }
-                                                                                    Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    Text(content: after_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                 }
                                                                             }.into_any()
                                                                         } else {
                                                                             element! {
                                                                                 View(flex_direction: FlexDirection::Row) {
-                                                                                    Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    Text(content: before_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                     View(background_color: cursor_bg_final_clone, width: 1) {
                                                                                         Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                                     }
-                                                                                    Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                    Text(content: after_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                 }
                                                                             }.into_any()
                                                                         }
                                                                     } else {
                                                                         element! {
                                                                             View(flex_direction: FlexDirection::Row) {
-                                                                                Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                Text(content: before_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                                 View(background_color: cursor_bg_final_clone, width: 1) {
                                                                                     Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                                 }
-                                                                                Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                                Text(content: after_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                             }
                                                                         }.into_any()
                                                                     }
                                                                 } else {
                                                                     element! {
                                                                         View(flex_direction: FlexDirection::Row) {
-                                                                            Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                            Text(content: before_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                             View(background_color: cursor_bg_final_clone, width: 1) {
                                                                                 Text(content: c_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                             }
-                                                                            Text(content: after_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                            Text(content: after_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                         }
                                                                     }.into_any()
                                                                 }
@@ -566,11 +579,11 @@ pub fn BlocksRenderer(
                                                             Arc::new(move || {
                                                                 element! {
                                                                     View(flex_direction: FlexDirection::Row) {
-                                                                        Text(content: before_str.clone(), color: theme::FG, wrap: TextWrap::Wrap)
+                                                                        Text(content: before_str.clone(), color: theme::fg(), wrap: TextWrap::Wrap)
                                                                         View(background_color: cursor_bg_final_clone, width: 1) {
                                                                             Text(content: cursor_char_str.clone(), color: cursor_fg_clone, wrap: TextWrap::Wrap)
                                                                         }
-                                                                        Text(content: "", color: theme::FG, wrap: TextWrap::Wrap)
+                                                                        Text(content: "", color: theme::fg(), wrap: TextWrap::Wrap)
                                                                     }
                                                                 }.into_any()
                                                             })
@@ -587,10 +600,10 @@ pub fn BlocksRenderer(
                                                             )
                                                         }.into_any()
                                                     } else {
-                                                        element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
+                                                        element! { Text(content: segment.to_string(), color: theme::fg(), wrap: TextWrap::Wrap) }.into_any()
                                                     }
                                                 } else {
-                                                    element! { Text(content: segment.to_string(), color: theme::FG, wrap: TextWrap::Wrap) }.into_any()
+                                                    element! { Text(content: segment.to_string(), color: theme::fg(), wrap: TextWrap::Wrap) }.into_any()
                                                 }
                                             }))
                                         }
@@ -661,17 +674,18 @@ pub fn BlocksRenderer(
                     // Wrap with debug border/label if debug annotations are enabled
                     let rendered = if props.debug_annotations {
                         let (label, color) = match block {
-                            Block::Heading { .. } => ("H".to_string(), theme::DBG_HEADING),
-                            Block::Paragraph { .. } => ("P".to_string(), theme::DBG_PARAGRAPH),
-                            Block::Code { .. } => ("Code".to_string(), theme::DBG_CODE),
-                            Block::Image { .. } => ("Img".to_string(), theme::DBG_IMAGE),
-                            Block::Math { .. } => ("Math".to_string(), theme::DBG_MATH),
-                            Block::Mermaid { .. } => ("Mermaid".to_string(), theme::DBG_MERMAID),
-                            Block::Quote { .. } => (">".to_string(), theme::DBG_QUOTE),
-                            Block::Table { .. } => ("Table".to_string(), theme::DBG_TABLE),
-                            Block::List { .. } => ("List".to_string(), theme::DBG_LIST),
-                            Block::ThematicBreak { .. } => ("---".to_string(), theme::DBG_BREAK),
-                            Block::Html { .. } => ("HTML".to_string(), theme::DBG_HTML),
+                            Block::Heading { .. } => ("H".to_string(), theme::dbg_heading()),
+                            Block::Paragraph { .. } => ("P".to_string(), theme::dbg_paragraph()),
+                            Block::Code { .. } => ("Code".to_string(), theme::dbg_code()),
+                            Block::Image { .. } => ("Img".to_string(), theme::dbg_image()),
+                            Block::Math { .. } => ("Math".to_string(), theme::dbg_math()),
+                            Block::Mermaid { .. } => ("Mermaid".to_string(), theme::dbg_mermaid()),
+                            Block::Quote { .. } => (">".to_string(), theme::dbg_quote()),
+                            Block::Table { .. } => ("Table".to_string(), theme::dbg_table()),
+                            Block::List { .. } => ("List".to_string(), theme::dbg_list()),
+                            Block::ThematicBreak { .. } => ("---".to_string(), theme::dbg_break()),
+                            Block::Html { .. } => ("HTML".to_string(), theme::dbg_html()),
+                            Block::FootnoteDefinition { .. } => ("FN".to_string(), theme::dbg_quote()),
                         };
                         let est_h = estimate_block_height(block, &props.content, vw);
                         debug::log_event(&debug::DebugEvent::BlockLayout {
@@ -685,9 +699,9 @@ pub fn BlocksRenderer(
                         element! {
                             View(flex_direction: FlexDirection::Column) {
                                 View(flex_direction: FlexDirection::Row, background_color: color, padding_left: 1) {
-                                    Text(content: format!("[{} {}..{} h={}]", label, span.0, span.1, est_h), color: theme::DARK_BG, weight: Weight::Bold)
+                                    Text(content: format!("[{} {}..{} h={}]", label, span.0, span.1, est_h), color: theme::dark_bg(), weight: Weight::Bold)
                                 }
-                                View(border_style: BorderStyle::Single, border_color: color, background_color: theme::DBG_BG) {
+                                View(border_style: BorderStyle::Single, border_color: color, background_color: theme::dbg_bg()) {
                                     #(Some(rendered).into_iter())
                                 }
                             }

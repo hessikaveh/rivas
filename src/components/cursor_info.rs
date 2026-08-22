@@ -81,26 +81,26 @@ pub fn CursorInfo(props: &CursorInfoProps) -> impl Into<AnyElement<'static>> {
     let before_win = tail_to_width(&props.before, before_keep);
     let after_win = head_to_width(&props.after, after_keep);
 
-    let prefix_color = props.prefix_color.unwrap_or(theme::YELLOW);
+    let prefix_color = props.prefix_color.unwrap_or(theme::yellow());
 
     element! {
         View(flex_direction: FlexDirection::Row) {
             Text(content: prefix, color: prefix_color, weight: Weight::Bold)
-            Text(content: before_win, color: theme::FG)
+            Text(content: before_win, color: theme::fg())
             #(if let Some(bg) = props.cursor_bg {
                 Some(element! {
                     View(background_color: bg) {
-                        Text(content: props.cursor_char.clone(), color: theme::DARK_BG)
+                        Text(content: props.cursor_char.clone(), color: theme::dark_bg())
                     }
                 })
             } else {
                 Some(element! {
                     View() {
-                        Text(content: props.cursor_char.clone(), color: theme::FG)
+                        Text(content: props.cursor_char.clone(), color: theme::fg())
                     }
                 })
             }.into_iter())
-            Text(content: after_win, color: theme::FG)
+            Text(content: after_win, color: theme::fg())
         }
     }
 }
