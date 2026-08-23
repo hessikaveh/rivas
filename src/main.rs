@@ -26,6 +26,19 @@ enum AppAction {
     SearchFile,
 }
 
+/// Switches to `new_path`, first auto-saving the current buffer to *its own*
+/// file (never the file being opened) when modified on disk.
+fn switch_file(old_path: &PathBuf, new_path: &PathBuf, content: &str) -> anyhow::Result<String> {
+    if old_path != new_path && old_path.exists() {
+        if let Ok(on_disk) = fs::read_to_string(old_path) {
+            if on_disk != content {
+                let _ = fs::write(old_path, content);
+            }
+        }
+    }
+    Ok(fs::read_to_string(new_path)?)
+}
+
 #[derive(Parser)]
 #[command(
     name = "rivas",
@@ -217,8 +230,19 @@ fn App<'a>(props: &AppProps<'a>, mut hooks: Hooks) -> impl Into<AnyElement<'stat
         .unwrap_or("untitled.md")
         .to_string();
     let content = hooks.use_state(|| props.content.to_string());
+    let current_path = hooks.use_state(|| props.file_path.clone().unwrap_or_default());
+    let path = {
+        let p = current_path.read().clone();
+        if p.as_os_str().is_empty() {
+            PathBuf::from("untitled.md")
+        } else {
+            p
+        }
+    };
     let mouse_captured = hooks.use_state(|| false);
     let cursor_offset = hooks.use_ref(|| 0usize);
+    // Feedback for file-open actions (success or failure) shown in the bar.
+    let status_msg = hooks.use_state(|| None::<(bool, String)>);
 
     hooks.use_terminal_events({
         let mut should_exit = should_exit;
@@ -269,6 +293,43 @@ fn App<'a>(props: &AppProps<'a>, mut hooks: Hooks) -> impl Into<AnyElement<'stat
             should_exit.set(true);
         }
     });
+    // Sidebar file tree: open the selected file (auto-saving the current one).
+    let on_open_file = {
+        let content = content.clone();
+        let current_path = current_path.clone();
+        let status_msg = status_msg.clone();
+        hooks.use_async_handler(move |path: PathBuf| {
+            let mut content = content.clone();
+            let mut current_path = current_path.clone();
+            let mut status_msg = status_msg.clone();
+            async move {
+                let old_path = current_path.read().clone();
+                let buffer = content.read().clone();
+                match switch_file(&old_path, &path, &buffer) {
+                    Ok(text) => {
+                        content.set(text);
+                        current_path.set(path.clone());
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string());
+                        if old_path == path {
+                            status_msg.set(Some((true, format!("Opened: {name}"))));
+                        } else {
+                            status_msg.set(Some((true, format!("Saved & opened: {name}"))));
+                        }
+                    }
+                    Err(_) => {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string());
+                        status_msg.set(Some((false, format!("✗ Not a text file: {name}"))))
+                    }
+                }
+            }
+        })
+    };
 
     element! {
         View(flex_direction: FlexDirection::Column, width, height) {
@@ -284,35 +345,51 @@ fn App<'a>(props: &AppProps<'a>, mut hooks: Hooks) -> impl Into<AnyElement<'stat
                 debug_annotations: props.debug_annotations,
                 on_change,
                 on_quit,
+                on_open_file,
             )
             View(width: 100pct, height: 1, background_color: theme::status_bg(), flex_direction: FlexDirection::Row) {
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " :q ", color: theme::fg())
-                }
-                Text(content: " Quit ")
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " C-p ", color: theme::fg())
-                }
-                Text(content: " Find ")
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " j/k ", color: theme::fg())
-                }
-                Text(content: " Scroll ")
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " gg/G ", color: theme::fg())
-                }
-                Text(content: " Top/Bottom ")
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " :math ", color: theme::fg())
-                }
-                Text(content: " Math mode ")
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " 🔍 [ ] ", color: theme::fg())
-                }
-                View(background_color: theme::dark_grey()) {
-                    Text(content: " C-t ", color: theme::fg())
-                }
-                Text(content: format!(" Theme ({}) ", theme::current().name))
+                #(if let Some((ok, msg)) = status_msg.read().clone() {
+                    // While a feedback message is active it takes over the bar
+                    // so long paths are never clipped by the hint chips.
+                    Some(element! {
+                        View(background_color: if ok { theme::green() } else { theme::red() }) {
+                            Text(content: format!(" {msg} "), color: theme::dark_bg(), weight: Weight::Bold)
+                        }
+                    }.into_any())
+                } else {
+                    Some(element! {
+                        View(flex_direction: FlexDirection::Row) {
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " :q ", color: theme::fg())
+                            }
+                            Text(content: " Quit ")
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " C-p ", color: theme::fg())
+                            }
+                            Text(content: " Find ")
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " j/k ", color: theme::fg())
+                            }
+                            Text(content: " Scroll ")
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " gg/G ", color: theme::fg())
+                            }
+                            Text(content: " Top/Bottom ")
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " :math ", color: theme::fg())
+                            }
+                            Text(content: " Math ")
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " C-t ", color: theme::fg())
+                            }
+                            Text(content: format!(" Theme ({}) ", theme::current().name))
+                            View(background_color: theme::dark_grey()) {
+                                Text(content: " \\ ", color: theme::fg())
+                            }
+                            Text(content: " Files ")
+                        }
+                    }.into_any())
+                }.into_iter())
                 View(flex_grow: 1.0) {}
             }
         }
