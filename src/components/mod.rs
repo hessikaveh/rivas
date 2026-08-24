@@ -8,6 +8,8 @@ pub mod cursor_info;
 pub mod document;
 /// Vim-style modal editor with Normal, Insert, Visual, Command, and Search modes.
 pub mod editor;
+/// Collapsible left-side file explorer panel.
+pub mod file_tree;
 /// Footnote definition rendering with dim label marker.
 pub mod footnote_block;
 /// ATX heading rendering (h1–h6) with optional icons.
